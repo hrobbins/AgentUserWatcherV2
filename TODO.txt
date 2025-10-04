@@ -1,0 +1,10 @@
+Run a local agent that:
+    Connects to a host on the local network via VNC at a configured period (default every 5 minutes)
+    Takes a screenshot (ideally of just the active application)
+    Analyzes it to see what's going on
+    Reports back to the local server what's going on, on the other server
+        eg. they're working on math
+        eg. they're playing games
+    If connected to the specified server URL for monitoring the particular VNC host, 
+        the local server will dynamically update / append client page with the current activity status
+           and a copy of the screenshot

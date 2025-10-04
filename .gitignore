@@ -1,0 +1,9 @@
+node_modules
+public/screenshots
+agent-screenshots
+.env
+npm-debug.log*
+
+
+
+

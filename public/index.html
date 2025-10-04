@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent User Watcher</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>Agent User Watcher</h1>
+        <p class="subtitle">Live snapshots of monitored hosts</p>
+      </header>
+      <section id="hosts" class="hosts"></section>
+    </main>
+    <template id="host-template">
+      <article class="host">
+        <div class="host__meta">
+          <h2 class="host__title"></h2>
+          <p class="host__description"></p>
+          <p class="host__summary"></p>
+          <p class="host__timestamp"></p>
+        </div>
+        <div class="host__media">
+          <img class="host__image" alt="Screenshot" />
+        </div>
+      </article>
+    </template>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
+
+
+
+

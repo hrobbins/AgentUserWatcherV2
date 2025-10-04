@@ -1,0 +1,25 @@
+{
+  "hosts": [
+    {
+      "id": "nathan-host",
+      "host": "10.0.4.101",
+      "port": 5901,
+      "password": "2011",
+      "description": "Nathan VNC connection",
+      "_security": "none"
+    }
+  ],
+  "pollIntervalMs": 300000,
+  "analysis": {
+    "ocr": true,
+    "dominantColor": true
+  },
+  "serverUrl": "http://localhost:4000/api/activity",
+  "includeWindowTitle": true,
+  "saveScreenshotsLocally": false,
+  "localScreenshotDirectory": "screenshots"
+}
+
+
+
+
