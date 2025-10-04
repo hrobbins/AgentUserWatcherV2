@@ -17,11 +17,12 @@ const agentConfig = loadConfig('agent.json', {
   },
   capture: {
     frameAttempts: 5,
-    frameTimeoutMs: 15_000,
+    frameTimeoutMs: 60_000,
     retryDelayMs: 1_000,
     reconnectDelayMs: 5_000,
     sendEmptyFrameAfterFailures: 3,
     sendEmptyFrameInterval: 10 * 60 * 1000,
+    ignoreCursor: true,
   },
   serverUrl: 'http://localhost:4000/api/activity',
   includeWindowTitle: true,
@@ -33,20 +34,7 @@ if (agentConfig.saveScreenshotsLocally) {
   fs.mkdirSync(agentConfig.localScreenshotDirectory, { recursive: true });
 }
 
-const DEFAULT_ENCODINGS = [
-  rfb.encodings.raw,
-  rfb.encodings.hextile,
-  rfb.encodings.copyRect,
-  rfb.encodings.pseudoDesktopSize,
-  rfb.encodings.pseudoCursor,
-];
-
-function delay(ms) {
-  if (!ms || ms <= 0) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const DEFAULT_ENCODINGS = [rfb.encodings.raw];
 
 function formatError(error) {
   if (!error) {
@@ -136,155 +124,83 @@ function resolveSecurity(host) {
   return mapped;
 }
 
-async function createOrReuseConnection(host, logger, existingConnection) {
-  if (existingConnection && !existingConnection.__agentClosed) {
-    return existingConnection;
+async function processHost(host) {
+  console.log(`Processing host ${host.id} ${host.host}:${host.port}`);
+  let connection;
+  try {
+    connection = rfb.createConnection({
+      host: host.host,
+      port: host.port,
+      password: host.password,
+      security: resolveSecurity(host),
+      encodings: host.encodings || DEFAULT_ENCODINGS,
+      timeout: host.connectTimeoutMs ?? agentConfig.capture?.connectTimeoutMs ?? 10_000,
+    });
+  } catch (error) {
+    console.error(`Failed to connect to VNC host ${host.id}: ${formatError(error)}`);
+    return;
   }
 
-  const connectTimeoutMs = host.connectTimeoutMs ?? agentConfig.capture?.connectTimeoutMs ?? 10_000;
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let timeoutId;
-    let connection;
-
-    const finish = (value, isError = false) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      if (!connection.__agentCloseListenerAttached) {
-        connection.__agentCloseListenerAttached = true;
-        connection.once('close', () => {
-          connection.__agentClosed = true;
-        });
-      }
-      connection.__agentClosed = isError;
-      connection.removeListener('connect', onConnect);
-      connection.removeListener('error', onError);
-      connection.removeListener('end', onEnd);
-      if (isError) {
-        reject(value instanceof Error ? value : new Error(String(value)));
-      } else {
-        logger.info(`Connected to ${host.host}:${host.port}`);
-        connection.__agentClosed = false;
-        resolve(connection);
-      }
+  let frame;
+  try {
+    const captureOptions = {
+      maxAttempts: agentConfig.capture?.frameAttempts ?? agentConfig.capture?.maxAttempts ?? 3,
+      timeoutMs: agentConfig.capture?.frameTimeoutMs ?? agentConfig.capture?.timeoutMs ?? 10_000,
+      retryDelayMs: agentConfig.capture?.retryDelayMs ?? 750,
+      closeOnFinish: true,
+      logger: createPrefixedLogger(`host:${host.id}`),
     };
 
-    const onConnect = () => {
-      finish(connection);
-    };
+    frame = await captureFrame(connection, captureOptions);
+  } catch (error) {
+    console.error(`Failed to capture frame for host ${host.id}: ${formatError(error)}`);
+    return;
+  }
 
-    const onError = (error) => {
-      finish(error, true);
-    };
+  if (!frame || !frame.buffer) {
+    console.warn(`No frame captured for host ${host.id}`);
+    return;
+  }
 
-    const onEnd = () => {
-      finish(new Error('Connection ended before initial frame request'), true);
-    };
+  const imageBuffer = await sharp(frame.buffer, {
+    raw: {
+      width: frame.width,
+      height: frame.height,
+      channels: 4,
+    },
+  })
+    .ensureAlpha()
+    .png()
+    .toBuffer();
 
-    try {
-      connection = rfb.createConnection({
-        host: host.host,
-        port: host.port,
-        password: host.password,
-        security: resolveSecurity(host),
-        encodings: host.encodings || DEFAULT_ENCODINGS,
-        timeout: connectTimeoutMs,
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
+  if (agentConfig.saveScreenshotsLocally) {
+    const filename = `${host.id}-${Date.now()}.png`;
+    const filepath = path.join(agentConfig.localScreenshotDirectory, filename);
+    await fs.promises.writeFile(filepath, imageBuffer);
+  }
 
-    connection.__agentClosed = true;
-
-    connection.once('connect', onConnect);
-    connection.once('error', onError);
-    connection.once('end', onEnd);
-
-    if (connectTimeoutMs > 0) {
-      timeoutId = setTimeout(() => {
-        timeoutId = null;
-        finish(new Error(`Timed out after ${connectTimeoutMs}ms waiting for VNC connection`), true);
-      }, connectTimeoutMs).unref();
-    }
+  const analysis = await analyzeActivity({
+    buffer: imageBuffer,
+    enableOcr: agentConfig.analysis?.ocr,
+    enableColor: agentConfig.analysis?.dominantColor,
+    includeWindowTitle: agentConfig.includeWindowTitle,
+    tesseract: Tesseract,
+    host,
   });
-}
-
-async function recordSnapshot(host, frame, logger, overrideAnalysis) {
-  let imageBuffer = null;
-
-  if (frame && frame.buffer) {
-    try {
-      imageBuffer = await sharp(frame.buffer, {
-        raw: {
-          width: frame.width,
-          height: frame.height,
-          channels: 4,
-        },
-      })
-        .ensureAlpha()
-        .png()
-        .toBuffer();
-    } catch (error) {
-      logger.error(`Failed to convert frame to PNG: ${formatError(error)}`);
-      imageBuffer = null;
-    }
-
-    if (imageBuffer && agentConfig.saveScreenshotsLocally) {
-      try {
-        const filename = `${host.id}-${Date.now()}.png`;
-        const filepath = path.join(agentConfig.localScreenshotDirectory, filename);
-        await fs.promises.writeFile(filepath, imageBuffer);
-        logger.debug(`Saved local screenshot to ${filepath}`);
-      } catch (error) {
-        logger.error(`Failed to save screenshot locally: ${formatError(error)}`);
-      }
-    }
-  }
-
-  let analysis = overrideAnalysis;
-
-  if (!analysis) {
-    if (!imageBuffer) {
-      analysis = {
-        summary: 'No image available',
-        confidence: null,
-        details: { reason: 'no_image' },
-      };
-    } else {
-      analysis = await analyzeActivity({
-        buffer: imageBuffer,
-        enableOcr: agentConfig.analysis?.ocr,
-        enableColor: agentConfig.analysis?.dominantColor,
-        includeWindowTitle: agentConfig.includeWindowTitle,
-        tesseract: Tesseract,
-        host,
-      });
-    }
-  }
 
   const payload = {
     description: host.description || '',
     summary: analysis.summary,
-    confidence: analysis.confidence ?? null,
-    details: analysis.details || {},
-  };
-
-  if (imageBuffer) {
-    payload.screenshot = {
+    confidence: analysis.confidence,
+    details: analysis.details,
+    screenshot: {
       data: imageBuffer.toString('base64'),
       encoding: 'base64',
       extension: '.png',
-    };
-  }
+    },
+  };
 
   const targetUrl = `${agentConfig.serverUrl.replace(/\/$/, '')}/${encodeURIComponent(host.id)}`;
-
   try {
     await axios.post(targetUrl, payload, {
       timeout: 15_000,
@@ -292,112 +208,9 @@ async function recordSnapshot(host, frame, logger, overrideAnalysis) {
         'Content-Type': 'application/json',
       },
     });
-    logger.info(`Reported activity for host ${host.id}`);
+    console.log(`Reported activity for host ${host.id}`);
   } catch (error) {
-    logger.error(`Failed to report activity for host ${host.id}: ${formatError(error)}`);
-  }
-
-  return payload;
-}
-
-async function processHost(host) {
-  const logger = createPrefixedLogger(`host:${host.id}`);
-  logger.info(`Starting monitoring loop for ${host.host}:${host.port}`);
-
-  const pollInterval = host.pollIntervalMs ?? agentConfig.pollIntervalMs;
-  const reconnectDelay = agentConfig.capture?.reconnectDelayMs ?? 5_000;
-  const sendEmptyFrameAfterFailures = agentConfig.capture?.sendEmptyFrameAfterFailures ?? 3;
-  const sendEmptyFrameInterval = agentConfig.capture?.sendEmptyFrameInterval ?? 10 * 60 * 1000;
-
-  let failuresInRow = 0;
-  let sendEmptyFrameTimer;
-  let connection = null;
-
-  const stopEmptyFrameTimer = () => {
-    if (sendEmptyFrameTimer) {
-      clearTimeout(sendEmptyFrameTimer);
-      sendEmptyFrameTimer = null;
-    }
-  };
-
-  const scheduleEmptyFrame = () => {
-    stopEmptyFrameTimer();
-    if (sendEmptyFrameInterval > 0) {
-      sendEmptyFrameTimer = setTimeout(() => {
-        sendEmptyFrameTimer = null;
-        recordSnapshot(host, null, logger, {
-          summary: 'No image available',
-          confidence: null,
-          details: { reason: 'no_capture' },
-        }).catch((error) => {
-          logger.error(`Failed to record empty snapshot: ${formatError(error)}`);
-        });
-      }, sendEmptyFrameInterval).unref();
-    }
-  };
-
-  const resetFailureCounters = () => {
-    failuresInRow = 0;
-    scheduleEmptyFrame();
-  };
-
-  scheduleEmptyFrame();
-
-  while (true) {
-    const captureOptions = {
-      maxAttempts: agentConfig.capture?.frameAttempts ?? 5,
-      timeoutMs: agentConfig.capture?.frameTimeoutMs ?? 15_000,
-      retryDelayMs: agentConfig.capture?.retryDelayMs ?? 1_000,
-      closeOnFinish: false,
-      logger,
-    };
-
-    try {
-      if (!connection || connection.__agentClosed) {
-        connection = await createOrReuseConnection(host, logger, connection);
-      }
-
-      const frame = await captureFrame(connection, captureOptions);
-
-      if (!frame || !frame.buffer) {
-        throw new Error('Frame capture returned empty result');
-      }
-
-      resetFailureCounters();
-      await recordSnapshot(host, frame, logger);
-    } catch (error) {
-      failuresInRow += 1;
-      logger.error(`Failed snapshot attempt ${failuresInRow}: ${formatError(error)}`);
-
-      if (connection) {
-        try {
-          connection.__agentClosed = true;
-          connection.end();
-        } catch (_) {
-          // ignore
-        }
-      }
-      connection = null;
-
-      if (failuresInRow >= sendEmptyFrameAfterFailures) {
-        recordSnapshot(host, null, logger, {
-          summary: 'Unable to capture frame',
-          confidence: null,
-          details: { reason: 'capture_failed', attempts: failuresInRow },
-        }).catch((reportError) => {
-          logger.error(`Failed to record fallback snapshot: ${formatError(reportError)}`);
-        });
-        failuresInRow = 0;
-      }
-
-      await delay(reconnectDelay);
-    }
-
-    stopEmptyFrameTimer();
-    if (pollInterval > 0) {
-      await delay(pollInterval);
-    }
-    scheduleEmptyFrame();
+    console.error(`Failed to report activity for host ${host.id}: ${formatError(error)}`);
   }
 }
 

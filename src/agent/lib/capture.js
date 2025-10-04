@@ -1,190 +1,68 @@
+const rfb = require('rfb2');
+
 async function captureFrame(connection, options = {}) {
   const {
-    maxAttempts = 3,
     timeoutMs = 10_000,
-    retryDelayMs = 750,
-    closeOnFinish = true,
+    ignoreCursor = true,
     logger = console,
   } = options;
 
   const log = (level, message) => {
-    if (logger && typeof logger[level] === 'function') {
-      logger[level](message);
-    } else if (typeof console[level] === 'function') {
-      console[level](message);
-    } else {
-      console.log(message);
-    }
+    if (!logger) return;
+    const fn = typeof logger[level] === 'function' ? logger[level] : console[level] || console.log;
+    fn.call(logger, `[captureFrame]`, message);
   };
 
-  const requestFrame = (tag) => {
-    const width = connection.width || 4096;
-    const height = connection.height || 2160;
-    try {
-      connection.requestUpdate(false, 0, 0, width, height);
-      log('debug', `[captureFrame] Requested framebuffer update ${width}x${height}${tag ? ` (${tag})` : ''}`);
-    } catch (error) {
-      throw new Error(`Failed to request framebuffer update: ${error.message}`);
-    }
-  };
-
-  let attempt = 0;
-  let lastError;
-  let isConnected = connection.__agentConnected === true;
-  let initialRequestSent = false;
-  let connectListenerAttached = false;
-
-  const onConnect = () => {
-    isConnected = true;
-    initialRequestSent = true;
-    connection.__agentConnected = true;
-    log('info', '[captureFrame] VNC connection established, requesting full framebuffer');
-    try {
-      requestFrame('initial');
-    } catch (error) {
-      lastError = error;
-    }
-  };
-
-  if (!isConnected) {
-    connection.once('connect', onConnect);
-    connectListenerAttached = true;
-  }
-
-  if (!connection.__agentCloseListenerAttached) {
-    connection.__agentCloseListenerAttached = true;
-    connection.on('close', () => {
-      connection.__agentConnected = false;
-    });
-  }
-
-  try {
-    while (attempt < maxAttempts) {
-      attempt += 1;
-      const attemptTag = `${attempt}/${maxAttempts}`;
-      log('info', `[captureFrame] Waiting for frame attempt ${attemptTag}`);
-
-      if (isConnected && !initialRequestSent) {
-        try {
-          requestFrame(`attempt ${attemptTag}`);
-          initialRequestSent = true;
-        } catch (error) {
-          lastError = error;
-          log('warn', `[captureFrame] Attempt ${attemptTag} failed to request frame: ${error.message}`);
-          if (attempt >= maxAttempts) break;
-          await delay(retryDelayMs);
-          continue;
-        }
-      }
-
-      if (isConnected && attempt > 1) {
-        try {
-          requestFrame(`retry ${attemptTag}`);
-        } catch (error) {
-          lastError = error;
-          log('warn', `[captureFrame] Attempt ${attemptTag} failed to request frame: ${error.message}`);
-          if (attempt >= maxAttempts) break;
-          await delay(retryDelayMs);
-          continue;
-        }
-      }
-
-      try {
-        const frame = await waitForFrame(connection, {
-          attempt,
-          maxAttempts,
-          timeoutMs,
-          logger: log,
-        });
-        if (frame) {
-          log('info', `[captureFrame] Captured frame ${frame.width}x${frame.height} on attempt ${attemptTag}`);
-          return frame;
-        }
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        log('warn', `[captureFrame] Attempt ${attemptTag} failed: ${lastError.message}`);
-      }
-
-      if (attempt < maxAttempts) {
-        log('info', `[captureFrame] Retrying in ${retryDelayMs}ms (attempt ${attemptTag})`);
-        await delay(retryDelayMs);
-      }
-    }
-
-    throw lastError || new Error('Failed to capture frame');
-  } finally {
-    if (connectListenerAttached) {
-      try {
-        connection.removeListener('connect', onConnect);
-      } catch (_) {
-        // ignore
-      }
-    }
-
-    if (closeOnFinish) {
-      try {
-        connection.end();
-        log('debug', '[captureFrame] Closed VNC connection');
-      } catch (error) {
-        log('debug', `[captureFrame] Error while closing connection: ${error.message}`);
-      }
-    }
-  }
-}
-
-function waitForFrame(connection, { attempt, maxAttempts, timeoutMs, logger }) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const attemptTag = `${attempt}/${maxAttempts}`;
 
     const cleanup = () => {
       connection.removeListener('rect', onRect);
       connection.removeListener('error', onError);
       connection.removeListener('end', onEnd);
       connection.removeListener('close', onEnd);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
     };
 
     const finish = (value, isError = false) => {
       if (settled) return;
       settled = true;
       cleanup();
+      try {
+        connection.end();
+      } catch (error) {
+        // ignore close errors
+      }
+
       if (isError) {
-        reject(value);
+        reject(value instanceof Error ? value : new Error(String(value)));
       } else {
         resolve(value);
       }
     };
 
     const onRect = (rect) => {
-      if (isCursorRect(rect, connection)) {
-        logger('debug', `[captureFrame] Ignoring cursor rect ${rect.width}x${rect.height} on attempt ${attemptTag}`);
-        return;
-      }
-
       try {
+        if (ignoreCursor && rect.encoding === rfb.encodings.pseudoCursor) {
+          log('debug', `Ignoring cursor rect ${rect.width}x${rect.height}`);
+          return;
+        }
+
         const buffer = convertRectToRgba(rect, connection);
-        logger('debug', `[captureFrame] Received rect ${rect.width}x${rect.height} on attempt ${attemptTag}`);
         finish({
           buffer,
           width: rect.width,
           height: rect.height,
         });
       } catch (error) {
-        finish(error instanceof Error ? error : new Error(String(error)), true);
+        finish(error, true);
       }
     };
 
     const onError = (error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      logger('error', `[captureFrame] Connection error on attempt ${attemptTag}: ${message}`);
-      finish(error instanceof Error ? error : new Error(message), true);
+      finish(error, true);
     };
 
     const onEnd = () => {
-      logger('warn', `[captureFrame] Connection ended before frame on attempt ${attemptTag}`);
       finish(new Error('Connection closed by server before receiving a frame'), true);
     };
 
@@ -193,36 +71,26 @@ function waitForFrame(connection, { attempt, maxAttempts, timeoutMs, logger }) {
     connection.on('end', onEnd);
     connection.on('close', onEnd);
 
+    connection.once('connect', () => {
+      log('info', 'VNC connection established, requesting full framebuffer');
+      const width = connection.width || 4096;
+      const height = connection.height || 2160;
+      try {
+        connection.requestUpdate(false, 0, 0, width, height);
+      } catch (error) {
+        finish(error, true);
+      }
+    });
+
     const timeoutId = setTimeout(() => {
-      logger('warn', `[captureFrame] Timed out after ${timeoutMs}ms on attempt ${attemptTag}`);
+      log('warn', `Timed out after ${timeoutMs}ms waiting for frame`);
       finish(new Error(`Timed out after ${timeoutMs}ms waiting for frame`), true);
     }, timeoutMs);
-  });
-}
 
-async function delay(ms) {
-  if (!ms || ms <= 0) {
-    return;
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isCursorRect(rect, connection) {
-  const pseudoCursorEncoding = connection.encodings?.pseudoCursor;
-  if (pseudoCursorEncoding != null && rect.encoding === pseudoCursorEncoding) {
-    return true;
-  }
-
-  if (rect.width <= 64 && rect.height <= 64) {
-    const pixelCount = rect.width * rect.height;
-    const bytesPerPixel = connection.bpp >> 3;
-    if (rect.data && rect.data.length <= pixelCount * bytesPerPixel) {
-      return true;
+    if (typeof timeoutId.unref === 'function') {
+      timeoutId.unref();
     }
-  }
-
-  return false;
+  });
 }
 
 function convertRectToRgba(rect, connection) {
