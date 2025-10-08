@@ -16,13 +16,14 @@ const agentConfig = loadConfig('agent.json', {
     dominantColor: true,
   },
   capture: {
-    frameAttempts: 5,
-    frameTimeoutMs: 60_000,
+    frameAttempts: 3,
+    frameTimeoutMs: 10_000,
     retryDelayMs: 1_000,
     reconnectDelayMs: 5_000,
     sendEmptyFrameAfterFailures: 3,
     sendEmptyFrameInterval: 10 * 60 * 1000,
     ignoreCursor: true,
+    expectFullFrame: true,
   },
   serverUrl: 'http://localhost:4000/api/activity',
   includeWindowTitle: true,
@@ -34,6 +35,7 @@ if (agentConfig.saveScreenshotsLocally) {
   fs.mkdirSync(agentConfig.localScreenshotDirectory, { recursive: true });
 }
 
+// Use RAW encoding only - it's uncompressed and always works with TightVNC
 const DEFAULT_ENCODINGS = [rfb.encodings.raw];
 
 function formatError(error) {

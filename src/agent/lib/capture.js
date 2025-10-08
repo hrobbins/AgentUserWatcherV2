@@ -43,7 +43,15 @@ async function captureFrame(connection, options = {}) {
     const onRect = (rect) => {
       try {
         if (ignoreCursor && rect.encoding === rfb.encodings.pseudoCursor) {
-          log('debug', `Ignoring cursor rect ${rect.width}x${rect.height}`);
+          log('info', `Ignoring cursor rect ${rect.width}x${rect.height}, requesting next frame...`);
+          // Request another update to get the actual screen content
+          try {
+            const width = connection.width || 4096;
+            const height = connection.height || 2160;
+            connection.requestUpdate(false, 0, 0, width, height);
+          } catch (e) {
+            log('error', `Failed to request update after cursor: ${e.message}`);
+          }
           return;
         }
 
@@ -145,4 +153,3 @@ function scaleComponent(value, shift, max) {
 module.exports = {
   captureFrame,
 };
-
