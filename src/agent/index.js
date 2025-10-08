@@ -154,6 +154,7 @@ async function processHost(host) {
     };
 
     frame = await captureFrame(connection, captureOptions);
+    console.log(`Captured frame for ${host.id}: ${frame.width}x${frame.height} (${frame.buffer.length} bytes)`);
   } catch (error) {
     console.error(`Failed to capture frame for host ${host.id}: ${formatError(error)}`);
     return;
@@ -162,6 +163,10 @@ async function processHost(host) {
   if (!frame || !frame.buffer) {
     console.warn(`No frame captured for host ${host.id}`);
     return;
+  }
+  
+  if (frame.width < 100 || frame.height < 100) {
+    console.warn(`Frame dimensions too small for ${host.id}: ${frame.width}x${frame.height} - might be cursor rect`);
   }
 
   const imageBuffer = await sharp(frame.buffer, {

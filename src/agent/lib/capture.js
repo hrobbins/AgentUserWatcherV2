@@ -15,6 +15,7 @@ async function captureFrame(connection, options = {}) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let requestCount = 0;
 
     const cleanup = () => {
       connection.removeListener('rect', onRect);
@@ -42,6 +43,8 @@ async function captureFrame(connection, options = {}) {
 
     const onRect = (rect) => {
       try {
+        log('info', `Received rect: ${rect.width}x${rect.height} encoding=${rect.encoding} (cursor=${rfb.encodings.pseudoCursor})`);
+        
         if (ignoreCursor && rect.encoding === rfb.encodings.pseudoCursor) {
           log('info', `Ignoring cursor rect ${rect.width}x${rect.height}, requesting next frame...`);
           // Request another update to get the actual screen content
@@ -49,19 +52,77 @@ async function captureFrame(connection, options = {}) {
             const width = connection.width || 4096;
             const height = connection.height || 2160;
             connection.requestUpdate(false, 0, 0, width, height);
+            log('info', 'Successfully requested next frame after cursor');
           } catch (e) {
             log('error', `Failed to request update after cursor: ${e.message}`);
           }
           return;
         }
 
+        log('info', `Processing frame rect: ${rect.width}x${rect.height}`);
+        log('info', `Connection pixel format: bpp=${connection.bpp} depth=${connection.depth} bigEndian=${connection.isBigEndian}`);
+        log('info', `Color shifts: R=${connection.redShift} G=${connection.greenShift} B=${connection.blueShift}`);
+        log('info', `Color max: R=${connection.redMax} G=${connection.greenMax} B=${connection.blueMax}`);
+        log('info', `Rect data size: ${rect.data?.length} bytes`);
+        
+        // Sample raw input data
+        const inputSample = [];
+        for (let i = 0; i < Math.min(20, rect.data.length); i++) {
+          inputSample.push(rect.data[i]);
+        }
+        log('info', `First 20 input bytes: [${inputSample.join(',')}]`);
+        
         const buffer = convertRectToRgba(rect, connection);
+        log('info', `Successfully converted ${rect.width}x${rect.height} frame to RGBA (${buffer.length} bytes)`);
+        
+        // Check if frame is mostly black (which happens on initial connection)
+        const pixelCount = rect.width * rect.height;
+        const sampleSize = Math.min(1000, pixelCount); // Sample first 1000 pixels
+        let nonBlackPixels = 0;
+        
+        for (let i = 0; i < sampleSize; i++) {
+          const offset = i * 4;
+          const r = buffer[offset];
+          const g = buffer[offset + 1];
+          const b = buffer[offset + 2];
+          if (r > 10 || g > 10 || b > 10) { // Not black
+            nonBlackPixels++;
+          }
+        }
+        
+        const nonBlackPercent = (nonBlackPixels / sampleSize) * 100;
+        log('info', `Non-black pixels in sample: ${nonBlackPercent.toFixed(1)}% (${nonBlackPixels}/${sampleSize})`);
+        
+        // If frame is mostly black and we haven't retried much, request another update
+        if (nonBlackPercent < 1.0 && requestCount < 3) {
+          log('info', `Frame is mostly black (${nonBlackPercent.toFixed(1)}%), requesting another update...`);
+          requestCount++;
+          try {
+            const width = connection.width || 4096;
+            const height = connection.height || 2160;
+            // Use incremental=false to force full refresh
+            connection.requestUpdate(false, 0, 0, width, height);
+            log('info', `Requested update #${requestCount + 1}`);
+          } catch (e) {
+            log('error', `Failed to request another update: ${e.message}`);
+            // Accept the black frame if we can't request another
+            finish({
+              buffer,
+              width: rect.width,
+              height: rect.height,
+            });
+          }
+          return;
+        }
+        
+        log('info', `Accepting frame (${nonBlackPercent.toFixed(1)}% non-black)`);
         finish({
           buffer,
           width: rect.width,
           height: rect.height,
         });
       } catch (error) {
+        log('error', `Error in onRect: ${error.message}`);
         finish(error, true);
       }
     };
