@@ -11,12 +11,22 @@
   ],
   "pollIntervalMs": 300000,
   "analysis": {
-    "ocr": true,
-    "dominantColor": true
+    "ocr": false,
+    "dominantColor": false,
+    "lmStudio": true
+  },
+  "lmStudio": {
+    "apiUrl": "http://localhost:1234/v1/chat/completions",
+    "model": "gemma-3-12b-it-GGUF/gemma-3-12b-it-Q4_K_M.gguf",
+    "maxTokens": 300,
+    "temperature": 0.3,
+    "timeoutMs": 180000,
+    "resizeWidth": 1024,
+    "resizeHeight": 1024
   },
   "serverUrl": "http://localhost:4000/api/activity",
   "includeWindowTitle": true,
-  "saveScreenshotsLocally": true,
+  "saveScreenshotsLocally": false,
   "localScreenshotDirectory": "screenshots"
 }
 

@@ -154,7 +154,6 @@ async function processHost(host) {
     };
 
     frame = await captureFrame(connection, captureOptions);
-    console.log(`Captured frame for ${host.id}: ${frame.width}x${frame.height} (${frame.buffer.length} bytes)`);
   } catch (error) {
     console.error(`Failed to capture frame for host ${host.id}: ${formatError(error)}`);
     return;
@@ -163,10 +162,6 @@ async function processHost(host) {
   if (!frame || !frame.buffer) {
     console.warn(`No frame captured for host ${host.id}`);
     return;
-  }
-  
-  if (frame.width < 100 || frame.height < 100) {
-    console.warn(`Frame dimensions too small for ${host.id}: ${frame.width}x${frame.height} - might be cursor rect`);
   }
 
   const imageBuffer = await sharp(frame.buffer, {
@@ -190,9 +185,11 @@ async function processHost(host) {
     buffer: imageBuffer,
     enableOcr: agentConfig.analysis?.ocr,
     enableColor: agentConfig.analysis?.dominantColor,
+    enableLmStudio: agentConfig.analysis?.lmStudio,
     includeWindowTitle: agentConfig.includeWindowTitle,
     tesseract: Tesseract,
     host,
+    lmStudioConfig: agentConfig.lmStudio,
   });
 
   const payload = {
@@ -215,9 +212,9 @@ async function processHost(host) {
         'Content-Type': 'application/json',
       },
     });
-    console.log(`Reported activity for host ${host.id}`);
+    console.log(`✓ Successfully updated ${host.id} (${frame.width}x${frame.height})`);
   } catch (error) {
-    console.error(`Failed to report activity for host ${host.id}: ${formatError(error)}`);
+    console.error(`✗ Failed to report activity for host ${host.id}: ${formatError(error)}`);
   }
 }
 
@@ -238,8 +235,16 @@ async function runOnce() {
 }
 
 async function run() {
+  console.log(`Starting agent - will poll every ${agentConfig.pollIntervalMs / 1000} seconds`);
+  console.log(`Monitoring ${agentConfig.hosts.length} host(s)`);
+  console.log('Press Ctrl+C to stop\n');
+  
   await runOnce();
-  setInterval(runOnce, agentConfig.pollIntervalMs).unref();
+  
+  setInterval(async () => {
+    console.log(`\n[${new Date().toLocaleTimeString()}] Running scheduled poll...`);
+    await runOnce();
+  }, agentConfig.pollIntervalMs);
 }
 
 run().catch((error) => {
