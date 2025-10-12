@@ -7,6 +7,7 @@ const { loadConfig } = require('../shared/config');
 const { createActivityStore } = require('./store');
 const { createActivityRouter } = require('./routes/activity');
 const { createSseRouter } = require('./routes/sse');
+const { createClassificationsRouter } = require('./routes/classifications');
 
 const serverConfig = loadConfig('server.json', {
   port: 4000,
@@ -35,6 +36,7 @@ const store = createActivityStore({
 
 app.use('/api/activity', createActivityRouter(store));
 app.use('/api/stream', createSseRouter(store));
+app.use('/api/classifications', createClassificationsRouter(store));
 
 app.use('/screenshots', express.static(screenshotDir));
 app.use('/', express.static(path.resolve(process.cwd(), 'public')));

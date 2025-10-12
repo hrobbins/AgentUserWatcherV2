@@ -9,6 +9,14 @@ function createActivityStore(options) {
   const activities = new Map();
   const screenshotIndex = new Map();
   const emitter = new EventEmitter();
+  
+  // Classification tracking
+  const classificationStats = {
+    SCHOOL_WORK: { count: 0, history: [] },
+    NON_SCHOOL: { count: 0, history: [] },
+    LOCKED_INACTIVE: { count: 0, history: [] },
+    UNKNOWN: { count: 0, history: [] }
+  };
 
   setInterval(() => {
     prune(retentionMinutes);
@@ -30,6 +38,13 @@ function createActivityStore(options) {
       if (activity.latestScreenshot && activity.latestScreenshot.timestamp < cutoff) {
         activity.latestScreenshot = latest.screenshot || null;
       }
+    });
+    
+    // Prune classification history
+    Object.keys(classificationStats).forEach((type) => {
+      const filteredClassHistory = classificationStats[type].history.filter((entry) => entry.timestamp >= cutoff);
+      classificationStats[type].history = filteredClassHistory;
+      classificationStats[type].count = filteredClassHistory.length;
     });
   }
 
@@ -92,6 +107,25 @@ function createActivityStore(options) {
       current.history.shift();
     }
 
+    // Track classification
+    const activityType = payload.details?.activityType || 'UNKNOWN';
+    if (classificationStats[activityType]) {
+      classificationStats[activityType].count++;
+      classificationStats[activityType].history.push({
+        timestamp: now,
+        hostId,
+        summary: payload.summary,
+        confidence: payload.confidence,
+        category: payload.details?.category,
+        screenshot: screenshotMeta
+      });
+      
+      // Keep classification history under a reasonable limit (1000 entries per type)
+      if (classificationStats[activityType].history.length > 1000) {
+        classificationStats[activityType].history.shift();
+      }
+    }
+
     activities.set(hostId, current);
     ensureMaxHosts();
     emitter.emit('update', { hostId, entry });
@@ -127,7 +161,33 @@ function createActivityStore(options) {
       deleteScreenshots(hostId);
     });
     activities.clear();
+    
+    // Clear classification stats
+    Object.keys(classificationStats).forEach((type) => {
+      classificationStats[type].count = 0;
+      classificationStats[type].history = [];
+    });
+    
     emitter.emit('update', { cleared: true });
+  }
+
+  function getClassificationStats() {
+    const stats = {};
+    Object.keys(classificationStats).forEach((type) => {
+      stats[type] = {
+        count: classificationStats[type].count,
+        history: [...classificationStats[type].history]
+      };
+    });
+    return stats;
+  }
+
+  function getClassificationSummary() {
+    const summary = {};
+    Object.keys(classificationStats).forEach((type) => {
+      summary[type] = classificationStats[type].count;
+    });
+    return summary;
   }
 
   return {
@@ -135,6 +195,8 @@ function createActivityStore(options) {
     getAll,
     get,
     clear,
+    getClassificationStats,
+    getClassificationSummary,
     on: (event, listener) => emitter.on(event, listener),
     off: (event, listener) => emitter.removeListener(event, listener),
   };
