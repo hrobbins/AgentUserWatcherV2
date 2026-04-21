@@ -259,6 +259,25 @@ function createLedger({ dbPath, config }) {
     return { subject: 'PE', amount, source: 'pe_auto' };
   }
 
+  // Award PE credit when the agent has detected a qualifying 30-min break after 3pm.
+  // The agent decides when to call this; this function just guards against double-award.
+  function awardPeBreak(date, dayKind, peConfig, weekday) {
+    if (dayKind !== 'schoolday' || !peConfig) return null;
+    const row = db.prepare(`SELECT pe_seeded FROM daily_state WHERE date = ?`).get(date);
+    if (row && row.pe_seeded) return null;
+
+    const amount = peConfig.byWeekday?.[String(weekday)] ?? 1;
+    insertUnit({
+      date,
+      subject: 'PE',
+      source: 'pe_break',
+      amount,
+      note: weekday >= 4 ? 'archery' : 'walk',
+    });
+    db.prepare(`UPDATE daily_state SET pe_seeded = 1 WHERE date = ?`).run(date);
+    return { subject: 'PE', amount, source: 'pe_break' };
+  }
+
   function openDegraded(reason) {
     const existing = db.prepare(`SELECT id FROM degraded_windows WHERE end_ts IS NULL`).get();
     if (existing) return existing.id;
@@ -325,6 +344,7 @@ function createLedger({ dbPath, config }) {
     recordSample,
     accrueFromSample,
     seedPeIfDue,
+    awardPeBreak,
     openDegraded,
     closeDegraded,
     snapshotToday,

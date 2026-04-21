@@ -9,7 +9,7 @@
 
   "llm": {
     "baseUrl": "http://10.0.4.9:3838",
-    "model": "auto",
+    "model": "qwen/qwen2.5-vl-72b-instruct",
     "maxTokens": 400,
     "temperature": 0.2,
     "timeoutMs": 60000,

@@ -21,7 +21,7 @@ function renderDay() {
     return;
   }
   const kind = today.dayKind || 'unknown';
-  daySummaryEl.textContent = `${today.date} • ${kind}${today.peSeeded ? ' • PE seeded' : ''}`;
+  daySummaryEl.textContent = `${today.date} • ${kind}`;
   unitTotalEl.textContent = Math.floor(today.total || 0);
   unitGoalEl.textContent = today.goal || 12;
 
@@ -81,7 +81,8 @@ function renderSubjects() {
 function severityTag(sev) {
   if (sev == null) return '';
   const labels = ['on-task', 'drift', 'off-task', 'blocked'];
-  return `<span class="sev sev-${sev}">sev ${sev} ${labels[sev] || ''}</span>`;
+  const label = labels[sev] || `sev ${sev}`;
+  return `<span class="sev sev-${sev}" title="severity ${sev}">${label}</span>`;
 }
 
 function renderSamples() {

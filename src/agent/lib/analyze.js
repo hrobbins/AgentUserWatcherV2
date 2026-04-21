@@ -126,7 +126,7 @@ Return ONLY a single JSON object with these fields:
   "assessment_type": one of "quiz", "unit_test", "midterm", "final", "semester_exam", or null
 }
 
-SCHOOL_WORK = schoolwork tied to a recognizable subject: textbooks, learning platforms (Khan Academy, IXL, Duolingo, Canvas, Google Classroom), math/science problems, research/writing assignments, programming coursework, educational video lectures. "Independent Project" is also schoolwork and includes legitimate long-form creative/technical work: writing hard-SF novels, training ML/RL agents, running a small business, game development, electronics projects. IDE/terminal work counts as Independent Project or CS-related schoolwork.
+SCHOOL_WORK = schoolwork tied to a recognizable subject: textbooks, learning platforms (Khan Academy, IXL, Duolingo, Canvas, Google Classroom), math/science problems, research/writing assignments, programming coursework, educational video lectures. "Independent Project" is also schoolwork and includes legitimate long-form creative/technical work: writing hard-SF novels, training ML/RL agents, running a small business, game development, electronics projects. IDE/terminal work counts as Independent Project or CS-related schoolwork. AI writing/detection tools (ZeroGPT, Copyleaks, Grammarly, QuillBot, Humanize.ai, GPTZero, and similar grammar, paraphrase, or AI-detection sites) count as SCHOOL_WORK — classify as English or Social Studies based on the visible content.
 NON_SCHOOL = gaming, social media, short-form video feeds (YouTube Shorts, TikTok, Reels), entertainment streaming unrelated to class, shopping, chatting.
 LOCKED_INACTIVE = lock screens, screensavers, blank screens, UAC/password prompts.
 

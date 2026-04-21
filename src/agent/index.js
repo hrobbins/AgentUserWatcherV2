@@ -44,6 +44,7 @@ const analyzer = createAnalyzer({
 let tickCount = 0;
 let consecutiveLlmFailures = 0;
 let degraded = false;
+let inactiveSince = null; // ms timestamp when current inactive/locked streak began
 
 async function reportToServer(payload) {
   const url = `${config.serverUrl.replace(/\/$/, '')}/sample`;
@@ -97,13 +98,6 @@ async function tick() {
   const date = todayKey(now);
   const dayInfo = classifyDay(config.calendar, now);
   ledger.ensureDay(date, dayInfo.kind);
-
-  if (dayInfo.kind === 'schoolday') {
-    const peSeed = ledger.seedPeIfDue(date, dayInfo.kind, config.peSchedule, dayInfo.weekday, now);
-    if (peSeed) {
-      console.log(`[pe] auto-seeded ${peSeed.amount} PE unit(s) for ${date}`);
-    }
-  }
 
   const isSweep = tickCount % (config.backgroundSweepEvery || 5) === 0;
   const context = isSweep ? 'background_sweep' : 'foreground';
@@ -168,6 +162,24 @@ async function tick() {
     } catch (_) {}
   }
 
+  // PE break detection: award credit for the first 30-min pause from the computer after 3pm.
+  const isInactive = sample.category === 'LOCKED_INACTIVE';
+  if (isInactive) {
+    if (!inactiveSince) inactiveSince = now.getTime();
+  } else {
+    if (inactiveSince) {
+      const breakMs = now.getTime() - inactiveSince;
+      const startHour = new Date(inactiveSince).getHours();
+      if (breakMs >= 30 * 60 * 1000 && startHour >= 15 && dayInfo.kind === 'schoolday') {
+        const peAward = ledger.awardPeBreak(date, dayInfo.kind, config.peSchedule, dayInfo.weekday);
+        if (peAward) {
+          console.log(`[pe] awarded ${peAward.amount} PE unit(s) — 30-min break detected after 3pm`);
+        }
+      }
+      inactiveSince = null;
+    }
+  }
+
   const sampleId = ledger.recordSample(sample);
   const pollMinutes = (config.pollIntervalMs || 60000) / 60000;
   const accrual = classification
@@ -225,6 +237,9 @@ async function run() {
   console.log(`Poll every ${(config.pollIntervalMs || 60000) / 1000}s, sweep every ${config.backgroundSweepEvery} ticks`);
   console.log(`Enforcement mode: ${config.enforcement.mode} (Phase 1 is observe-only)`);
   console.log('');
+
+  // Seal any degraded windows left open by a previous process that was killed mid-run.
+  ledger.closeDegraded();
 
   await tick().catch((e) => console.error('tick error:', e));
   setInterval(() => {
