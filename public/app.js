@@ -1,236 +1,174 @@
-const hostsContainer = document.getElementById('hosts');
-const hostTemplate = document.getElementById('host-template');
-const modal = document.getElementById('history-modal');
-const modalTitle = document.getElementById('modal-title');
-const modalBody = document.getElementById('modal-body');
-const modalClose = document.getElementById('modal-close');
+const SUBJECTS = [
+  'Math', 'Science', 'English', 'Social Studies',
+  'PE', 'Foreign Language', 'Art/Elective', 'Independent Project',
+];
 
-const state = new Map();
+const daySummaryEl = document.getElementById('day-summary');
+const unitTotalEl = document.getElementById('unit-total');
+const unitGoalEl = document.getElementById('unit-goal');
+const progressBarEl = document.getElementById('progress-bar');
+const progressStatusEl = document.getElementById('progress-status');
+const subjectGridEl = document.getElementById('subject-grid');
+const sampleLatestEl = document.getElementById('sample-latest');
+const sampleListEl = document.getElementById('sample-list');
 
-// Classification type labels
-const classificationLabels = {
-  'SCHOOL_WORK': 'School Work',
-  'NON_SCHOOL': 'Non-School',
-  'LOCKED_INACTIVE': 'Locked/Inactive',
-  'UNKNOWN': 'Unknown'
-};
+let today = null;
+let samples = [];
 
-const classificationIcons = {
-  'SCHOOL_WORK': '📚',
-  'NON_SCHOOL': '🎮',
-  'LOCKED_INACTIVE': '🔒',
-  'UNKNOWN': '❓'
-};
+function renderDay() {
+  if (!today) {
+    daySummaryEl.textContent = 'No data yet — waiting for agent…';
+    return;
+  }
+  const kind = today.dayKind || 'unknown';
+  daySummaryEl.textContent = `${today.date} • ${kind}${today.peSeeded ? ' • PE seeded' : ''}`;
+  unitTotalEl.textContent = Math.floor(today.total || 0);
+  unitGoalEl.textContent = today.goal || 12;
 
-function renderHost(host) {
-  const latest = host.history?.[host.history.length - 1] || null;
-  const confidenceText = latest?.confidence != null
-    ? ` (confidence ${(latest.confidence * 100).toFixed(1)}%)`
-    : '';
-
-  let element = state.get(host.hostId);
-  if (!element) {
-    element = hostTemplate.content.firstElementChild.cloneNode(true);
-    element.dataset.hostId = host.hostId;
-    state.set(host.hostId, element);
-    hostsContainer.appendChild(element);
+  const goal = today.goal || 12;
+  progressBarEl.innerHTML = '';
+  for (let i = 0; i < goal; i += 1) {
+    const seg = document.createElement('div');
+    seg.className = 'progress__segment' + (i < (today.total || 0) ? ' progress__segment--on' : '');
+    progressBarEl.appendChild(seg);
   }
 
-  element.querySelector('.host__title').textContent = host.hostId;
-  element.querySelector('.host__description').textContent = host.description || '—';
-
-  const summaryEl = element.querySelector('.host__summary');
-  const timestampEl = element.querySelector('.host__timestamp');
-  const imageEl = element.querySelector('.host__image');
-
-  if (latest) {
-    summaryEl.textContent = `${latest.summary || 'No summary available'}${confidenceText}`;
-    timestampEl.textContent = `Updated ${new Date(latest.timestamp).toLocaleString()}`;
-
-    if (host.latestScreenshot?.path) {
-      imageEl.src = `${host.latestScreenshot.path}?t=${Date.now()}`;
-      imageEl.alt = `${host.hostId} screenshot`;
-      element.classList.remove('host--empty');
-    } else {
-      element.classList.add('host--empty');
-    }
+  if (today.unlockedAt) {
+    progressStatusEl.textContent = `🎉 Goal reached at ${new Date(today.unlockedAt).toLocaleTimeString()} — free time unlocked.`;
+    progressStatusEl.className = 'progress__status progress__status--unlocked';
+  } else if (today.degraded && today.degraded.some((d) => !d.end_ts)) {
+    progressStatusEl.textContent = '⚠ Classifier offline — no credit is being earned right now.';
+    progressStatusEl.className = 'progress__status progress__status--degraded';
   } else {
-    summaryEl.textContent = 'No activity yet';
-    timestampEl.textContent = '';
-    element.classList.add('host--empty');
+    progressStatusEl.textContent = kind === 'schoolday'
+      ? `Keep going — ${Math.max(0, goal - (today.total || 0))} unit(s) to go.`
+      : 'Free day — enforcement off. Units you earn today bank for next week.';
+    progressStatusEl.className = 'progress__status';
   }
 }
 
-function removeHost(hostId) {
-  const element = state.get(hostId);
-  if (element) {
-    hostsContainer.removeChild(element);
-    state.delete(hostId);
+function renderSubjects() {
+  const byName = new Map();
+  SUBJECTS.forEach((s) => byName.set(s, { subject: s, units: 0 }));
+  if (today && today.perSubject) {
+    today.perSubject.forEach((row) => {
+      if (byName.has(row.subject)) byName.get(row.subject).units = row.units;
+    });
   }
+  const pendingMap = new Map();
+  if (today && today.pendingMinutes) {
+    today.pendingMinutes.forEach((row) => pendingMap.set(row.subject, row));
+  }
+
+  subjectGridEl.innerHTML = '';
+  byName.forEach((v) => {
+    const cap = 2;
+    const card = document.createElement('div');
+    const pending = pendingMap.get(v.subject);
+    const pctToNext = pending ? Math.min(100, (pending.pending_minutes / 30) * 100) : 0;
+    const capped = v.units >= cap;
+    card.className = 'subject' + (capped ? ' subject--capped' : '') + (v.units > 0 ? ' subject--active' : '');
+    card.innerHTML = `
+      <div class="subject__name">${v.subject}</div>
+      <div class="subject__units">${Math.floor(v.units)} / ${cap}${capped ? ' ✓' : ''}</div>
+      <div class="subject__pending"><div class="subject__pending-bar" style="width:${pctToNext}%"></div></div>
+      <div class="subject__meta">${pending ? `${Math.round(pending.pending_minutes)} min toward next unit` : ''}</div>
+    `;
+    subjectGridEl.appendChild(card);
+  });
 }
 
-function sortAndRender(hosts) {
-  const sorted = [...hosts].sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
-  sorted.forEach(renderHost);
+function severityTag(sev) {
+  if (sev == null) return '';
+  const labels = ['on-task', 'drift', 'off-task', 'blocked'];
+  return `<span class="sev sev-${sev}">sev ${sev} ${labels[sev] || ''}</span>`;
 }
 
-function handleSnapshot(payload) {
-  hostsContainer.textContent = '';
-  state.clear();
-  sortAndRender(payload.hosts || []);
-}
-
-function handleUpdate(payload) {
-  if (payload.cleared) {
-    handleSnapshot({ hosts: [] });
-    updateClassificationStats();
+function renderSamples() {
+  const latest = samples[0];
+  if (!latest) {
+    sampleLatestEl.innerHTML = '<p class="muted">No samples yet.</p>';
+    sampleListEl.innerHTML = '';
     return;
   }
+  const time = new Date(latest.ts).toLocaleTimeString();
+  const conf = latest.confidence != null ? `${(latest.confidence * 100).toFixed(0)}%` : '—';
+  const quiz = latest.quizCompleted ? `<span class="tag tag--quiz">quiz ${latest.assessmentType || ''}</span>` : '';
+  sampleLatestEl.innerHTML = `
+    <div class="sample sample--latest">
+      ${latest.screenshotPath ? `<img src="${latest.screenshotPath}" alt="screenshot" />` : ''}
+      <div class="sample__meta">
+        <div class="sample__title">${time} • ${latest.context}</div>
+        <div><strong>${latest.category || 'UNKNOWN'}</strong>${latest.subject ? ` / ${latest.subject}` : ''} ${severityTag(latest.distractionSeverity)} ${quiz}</div>
+        <div class="muted">confidence ${conf}</div>
+        <div>${latest.description || ''}</div>
+        <div class="muted">${latest.processName || ''} — ${latest.windowTitle || ''}</div>
+      </div>
+    </div>
+  `;
 
-  if (payload.removed && payload.hostId) {
-    removeHost(payload.hostId);
-    return;
-  }
+  sampleListEl.innerHTML = samples.slice(1, 40).map((s) => {
+    const t = new Date(s.ts).toLocaleTimeString();
+    return `
+      <div class="sample sample--row">
+        <span class="sample__time">${t}</span>
+        <span class="sample__cat cat-${s.category || 'UNKNOWN'}">${s.category || '—'}</span>
+        <span class="sample__subject">${s.subject || '—'}</span>
+        ${severityTag(s.distractionSeverity)}
+        <span class="sample__title muted">${(s.windowTitle || '').slice(0, 60)}</span>
+      </div>
+    `;
+  }).join('');
+}
 
-  if (!payload.hostId) return;
-
-  fetch(`/api/activity/${encodeURIComponent(payload.hostId)}`)
-    .then((response) => {
-      if (!response.ok) {
-        if (response.status === 404) {
-          removeHost(payload.hostId);
-        }
-        throw new Error(`Request failed with status ${response.status}`);
-      }
-      return response.json();
-    })
-    .then((host) => {
-      renderHost(host);
-      updateClassificationStats();
-    })
-    .catch((error) => console.error('Failed to refresh host', error));
+function renderAll() {
+  renderDay();
+  renderSubjects();
+  renderSamples();
 }
 
 function bootstrap() {
   fetch('/api/activity')
-    .then((response) => response.json())
+    .then((r) => r.json())
     .then((data) => {
-      handleSnapshot(data);
-      updateClassificationStats();
+      today = data.today;
+      samples = data.samples || [];
+      renderAll();
       connectSse();
     })
-    .catch((error) => {
-      console.error('Failed to fetch initial hosts', error);
+    .catch((err) => {
+      console.error('bootstrap failed', err);
+      daySummaryEl.textContent = 'Failed to load — server not reachable.';
     });
 }
 
 function connectSse() {
-  const source = new EventSource('/api/stream');
-
-  source.addEventListener('snapshot', (event) => {
-    const payload = JSON.parse(event.data);
-    handleSnapshot(payload);
+  const src = new EventSource('/api/stream');
+  src.addEventListener('snapshot', (e) => {
+    const payload = JSON.parse(e.data);
+    today = payload.today;
+    samples = payload.samples || [];
+    renderAll();
   });
-
-  source.addEventListener('update', (event) => {
-    const payload = JSON.parse(event.data);
-    handleUpdate(payload);
+  src.addEventListener('update', (e) => {
+    const payload = JSON.parse(e.data);
+    if (payload.type === 'today') today = payload.today;
+    if (payload.type === 'sample') {
+      samples.unshift(payload.sample);
+      if (samples.length > 200) samples.pop();
+      if (payload.today) today = payload.today;
+    }
+    if (payload.type === 'cleared') {
+      today = null;
+      samples = [];
+    }
+    renderAll();
   });
-
-  source.onerror = () => {
-    console.warn('SSE connection lost, retrying in 5s');
-    source.close();
+  src.onerror = () => {
+    console.warn('SSE lost, retrying');
+    src.close();
     setTimeout(connectSse, 5000);
   };
 }
 
-// Fetch and update classification statistics
-function updateClassificationStats() {
-  fetch('/api/classifications/summary')
-    .then((response) => response.json())
-    .then((summary) => {
-      document.getElementById('count-work').textContent = summary.SCHOOL_WORK || 0;
-      document.getElementById('count-non-work').textContent = summary.NON_SCHOOL || 0;
-      document.getElementById('count-locked').textContent = summary.LOCKED_INACTIVE || 0;
-      document.getElementById('count-unknown').textContent = summary.UNKNOWN || 0;
-    })
-    .catch((error) => {
-      console.error('Failed to fetch classification summary', error);
-    });
-}
-
-// Show history modal
-function showHistoryModal(type) {
-  const label = classificationLabels[type] || type;
-  const icon = classificationIcons[type] || '';
-  
-  modalTitle.textContent = `${icon} ${label} History`;
-  modalBody.innerHTML = '<p class="loading">Loading history...</p>';
-  modal.classList.remove('hidden');
-  
-  fetch(`/api/classifications/${type}?limit=50`)
-    .then((response) => response.json())
-    .then((data) => {
-      if (!data.history || data.history.length === 0) {
-        modalBody.innerHTML = '<p class="empty-message">No history available for this classification.</p>';
-        return;
-      }
-      
-      // Sort history by timestamp (newest first)
-      const sortedHistory = [...data.history].sort((a, b) => b.timestamp - a.timestamp);
-      
-      const historyHtml = sortedHistory.map((entry) => {
-        const date = new Date(entry.timestamp).toLocaleString();
-        const confidenceText = entry.confidence != null 
-          ? ` <span class="confidence">(${(entry.confidence * 100).toFixed(0)}%)</span>` 
-          : '';
-        const categoryText = entry.category ? ` - ${entry.category}` : '';
-        const screenshotHtml = entry.screenshot?.path 
-          ? `<img class="history-item__screenshot" src="${entry.screenshot.path}" alt="Screenshot" />` 
-          : '';
-        
-        return `
-          <div class="history-item">
-            <div class="history-item__header">
-              <span class="history-item__host">${entry.hostId}</span>
-              <span class="history-item__date">${date}</span>
-            </div>
-            <div class="history-item__content">
-              <p class="history-item__summary">${entry.summary}${confidenceText}</p>
-              ${entry.category ? `<p class="history-item__category">Category: ${entry.category}</p>` : ''}
-            </div>
-            ${screenshotHtml}
-          </div>
-        `;
-      }).join('');
-      
-      modalBody.innerHTML = historyHtml;
-    })
-    .catch((error) => {
-      console.error('Failed to fetch classification history', error);
-      modalBody.innerHTML = '<p class="error-message">Failed to load history. Please try again.</p>';
-    });
-}
-
-// Close modal
-function closeModal() {
-  modal.classList.add('hidden');
-}
-
-// Event listeners for modal
-modalClose.addEventListener('click', closeModal);
-modal.querySelector('.modal__overlay').addEventListener('click', closeModal);
-
-// Event listeners for "View History" buttons
-document.querySelectorAll('.stat-card__button').forEach((button) => {
-  button.addEventListener('click', (e) => {
-    const type = e.target.dataset.type;
-    showHistoryModal(type);
-  });
-});
-
-// Update classification stats periodically
-setInterval(updateClassificationStats, 5000);
-
 bootstrap();
-

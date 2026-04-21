@@ -1,196 +1,62 @@
-const rfb = require('rfb2');
+const screenshot = require('screenshot-desktop');
+const sharp = require('sharp');
 
-async function captureFrame(connection, options = {}) {
-  const {
-    timeoutMs = 10_000,
-    ignoreCursor = true,
-    logger = console,
-  } = options;
-
-  const log = (level, message) => {
-    if (!logger) return;
-    const fn = typeof logger[level] === 'function' ? logger[level] : console[level] || console.log;
-    fn.call(logger, `[captureFrame]`, message);
-  };
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let requestCount = 0;
-
-    const cleanup = () => {
-      connection.removeListener('rect', onRect);
-      connection.removeListener('error', onError);
-      connection.removeListener('end', onEnd);
-      connection.removeListener('close', onEnd);
-    };
-
-    const finish = (value, isError = false) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      try {
-        connection.end();
-      } catch (error) {
-        // ignore close errors
-      }
-
-      if (isError) {
-        reject(value instanceof Error ? value : new Error(String(value)));
-      } else {
-        resolve(value);
-      }
-    };
-
-    const onRect = (rect) => {
-      try {
-        if (ignoreCursor && rect.encoding === rfb.encodings.pseudoCursor) {
-          log('info', `Ignoring cursor rect ${rect.width}x${rect.height}, requesting next frame...`);
-          // Request another update to get the actual screen content
-          try {
-            const width = connection.width || 4096;
-            const height = connection.height || 2160;
-            connection.requestUpdate(false, 0, 0, width, height);
-          } catch (e) {
-            log('error', `Failed to request update after cursor: ${e.message}`);
-          }
-          return;
-        }
-        
-        const buffer = convertRectToRgba(rect, connection);
-        
-        // Check if frame is mostly black (which happens on initial connection)
-        const pixelCount = rect.width * rect.height;
-        const sampleSize = Math.min(1000, pixelCount); // Sample first 1000 pixels
-        let nonBlackPixels = 0;
-        
-        for (let i = 0; i < sampleSize; i++) {
-          const offset = i * 4;
-          const r = buffer[offset];
-          const g = buffer[offset + 1];
-          const b = buffer[offset + 2];
-          if (r > 10 || g > 10 || b > 10) { // Not black
-            nonBlackPixels++;
-          }
-        }
-        
-        const nonBlackPercent = (nonBlackPixels / sampleSize) * 100;
-        
-        // If frame is mostly black and we haven't retried much, request another update
-        if (nonBlackPercent < 1.0 && requestCount < 3) {
-          log('info', `Frame is mostly black, requesting another update (attempt ${requestCount + 2})...`);
-          requestCount++;
-          try {
-            const width = connection.width || 4096;
-            const height = connection.height || 2160;
-            connection.requestUpdate(false, 0, 0, width, height);
-          } catch (e) {
-            log('error', `Failed to request another update: ${e.message}`);
-            // Accept the black frame if we can't request another
-            finish({
-              buffer,
-              width: rect.width,
-              height: rect.height,
-            });
-          }
-          return;
-        }
-        
-        log('info', `Captured ${rect.width}x${rect.height} frame`);
-        finish({
-          buffer,
-          width: rect.width,
-          height: rect.height,
-        });
-      } catch (error) {
-        log('error', `Error in onRect: ${error.message}`);
-        finish(error, true);
-      }
-    };
-
-    const onError = (error) => {
-      finish(error, true);
-    };
-
-    const onEnd = () => {
-      finish(new Error('Connection closed by server before receiving a frame'), true);
-    };
-
-    connection.on('rect', onRect);
-    connection.on('error', onError);
-    connection.on('end', onEnd);
-    connection.on('close', onEnd);
-
-    connection.once('connect', () => {
-      log('info', 'VNC connection established, requesting full framebuffer');
-      const width = connection.width || 4096;
-      const height = connection.height || 2160;
-      try {
-        connection.requestUpdate(false, 0, 0, width, height);
-      } catch (error) {
-        finish(error, true);
-      }
-    });
-
-    const timeoutId = setTimeout(() => {
-      log('warn', `Timed out after ${timeoutMs}ms waiting for frame`);
-      finish(new Error(`Timed out after ${timeoutMs}ms waiting for frame`), true);
-    }, timeoutMs);
-
-    if (typeof timeoutId.unref === 'function') {
-      timeoutId.unref();
-    }
-  });
+let _activeWindow = null;
+async function getActiveWindow() {
+  if (!_activeWindow) {
+    const mod = await import('get-windows');
+    _activeWindow = mod.activeWindow;
+  }
+  try {
+    return await _activeWindow();
+  } catch (err) {
+    return null;
+  }
 }
 
-function convertRectToRgba(rect, connection) {
-  const bytesPerPixel = connection.bpp >> 3;
-  const input = rect.data;
-  const pixelCount = rect.width * rect.height;
-  const output = Buffer.alloc(pixelCount * 4);
+async function capturePrimaryScreen() {
+  const buffer = await screenshot({ format: 'png' });
+  const meta = await sharp(buffer).metadata();
+  return { buffer, width: meta.width, height: meta.height };
+}
 
-  for (let i = 0; i < pixelCount; i += 1) {
-    const offset = i * bytesPerPixel;
-    let value;
+async function captureActiveWindow() {
+  const win = await getActiveWindow();
+  const full = await capturePrimaryScreen();
 
-    switch (bytesPerPixel) {
-      case 4:
-        value = connection.isBigEndian ? input.readUInt32BE(offset) : input.readUInt32LE(offset);
-        break;
-      case 3:
-        value = connection.isBigEndian
-          ? (input[offset] << 16) | (input[offset + 1] << 8) | input[offset + 2]
-          : input[offset] | (input[offset + 1] << 8) | (input[offset + 2] << 16);
-        break;
-      case 2:
-        value = connection.isBigEndian ? input.readUInt16BE(offset) : input.readUInt16LE(offset);
-        break;
-      case 1:
-        value = input[offset];
-        break;
-      default:
-        throw new Error(`Unsupported bytesPerPixel: ${bytesPerPixel}`);
-    }
-
-    const r = scaleComponent(value, connection.redShift, connection.redMax);
-    const g = scaleComponent(value, connection.greenShift, connection.greenMax);
-    const b = scaleComponent(value, connection.blueShift, connection.blueMax);
-
-    const outOffset = i * 4;
-    output[outOffset] = r;
-    output[outOffset + 1] = g;
-    output[outOffset + 2] = b;
-    output[outOffset + 3] = 255;
+  if (!win || !win.bounds) {
+    return { ...full, window: win || null, croppedToWindow: false };
   }
 
-  return output;
+  const { x, y, width, height } = win.bounds;
+  const left = Math.max(0, Math.floor(x));
+  const top = Math.max(0, Math.floor(y));
+  const w = Math.max(1, Math.min(full.width - left, Math.floor(width)));
+  const h = Math.max(1, Math.min(full.height - top, Math.floor(height)));
+
+  try {
+    const cropped = await sharp(full.buffer)
+      .extract({ left, top, width: w, height: h })
+      .png()
+      .toBuffer();
+    return { buffer: cropped, width: w, height: h, window: win, croppedToWindow: true };
+  } catch (_) {
+    return { ...full, window: win, croppedToWindow: false };
+  }
 }
 
-function scaleComponent(value, shift, max) {
-  if (max === 0) return 0;
-  const component = (value >> shift) & max;
-  return Math.round((component / max) * 255);
+function describeWindow(win) {
+  if (!win) return { title: '', processName: '', exePath: '' };
+  return {
+    title: win.title || '',
+    processName: (win.owner && win.owner.name) || '',
+    exePath: (win.owner && win.owner.path) || '',
+  };
 }
 
 module.exports = {
-  captureFrame,
+  capturePrimaryScreen,
+  captureActiveWindow,
+  getActiveWindow,
+  describeWindow,
 };

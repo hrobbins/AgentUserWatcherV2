@@ -3,91 +3,36 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agent User Watcher</title>
+    <title>Agent User Watcher — Progress</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="container">
       <header class="header">
-        <h1>Agent User Watcher</h1>
-        <p class="subtitle">Live snapshots of monitored hosts</p>
+        <h1>Study Progress</h1>
+        <p class="subtitle" id="day-summary">Loading…</p>
       </header>
-      
-      <!-- Classification Statistics Dashboard -->
-      <section class="stats-dashboard">
-        <h2 class="stats-title">Classification Statistics</h2>
-        <div class="stats-grid">
-          <div class="stat-card stat-card--work">
-            <div class="stat-card__icon">📚</div>
-            <div class="stat-card__content">
-              <h3 class="stat-card__label">School Work</h3>
-              <p class="stat-card__count" id="count-work">0</p>
-              <button class="stat-card__button" data-type="SCHOOL_WORK">View History</button>
-            </div>
-          </div>
-          
-          <div class="stat-card stat-card--non-work">
-            <div class="stat-card__icon">🎮</div>
-            <div class="stat-card__content">
-              <h3 class="stat-card__label">Non-School</h3>
-              <p class="stat-card__count" id="count-non-work">0</p>
-              <button class="stat-card__button" data-type="NON_SCHOOL">View History</button>
-            </div>
-          </div>
-          
-          <div class="stat-card stat-card--locked">
-            <div class="stat-card__icon">🔒</div>
-            <div class="stat-card__content">
-              <h3 class="stat-card__label">Locked/Inactive</h3>
-              <p class="stat-card__count" id="count-locked">0</p>
-              <button class="stat-card__button" data-type="LOCKED_INACTIVE">View History</button>
-            </div>
-          </div>
-          
-          <div class="stat-card stat-card--unknown">
-            <div class="stat-card__icon">❓</div>
-            <div class="stat-card__content">
-              <h3 class="stat-card__label">Unknown</h3>
-              <p class="stat-card__count" id="count-unknown">0</p>
-              <button class="stat-card__button" data-type="UNKNOWN">View History</button>
-            </div>
-          </div>
+
+      <section class="progress">
+        <div class="progress__total">
+          <span id="unit-total">0</span>
+          <span class="progress__goal"> / <span id="unit-goal">12</span> units</span>
         </div>
+        <div class="progress__bar" id="progress-bar"></div>
+        <p class="progress__status" id="progress-status"></p>
       </section>
-      
-      <section id="hosts" class="hosts"></section>
+
+      <section class="subjects">
+        <h2>Per Subject</h2>
+        <div class="subject-grid" id="subject-grid"></div>
+      </section>
+
+      <section class="timeline">
+        <h2>Recent Activity</h2>
+        <div class="sample-latest" id="sample-latest"></div>
+        <div class="sample-list" id="sample-list"></div>
+      </section>
     </main>
-    
-    <!-- History Modal -->
-    <div id="history-modal" class="modal hidden">
-      <div class="modal__overlay"></div>
-      <div class="modal__content">
-        <div class="modal__header">
-          <h2 class="modal__title" id="modal-title">Classification History</h2>
-          <button class="modal__close" id="modal-close">&times;</button>
-        </div>
-        <div class="modal__body" id="modal-body">
-          <!-- History items will be populated here -->
-        </div>
-      </div>
-    </div>
-    <template id="host-template">
-      <article class="host">
-        <div class="host__meta">
-          <h2 class="host__title"></h2>
-          <p class="host__description"></p>
-          <p class="host__summary"></p>
-          <p class="host__timestamp"></p>
-        </div>
-        <div class="host__media">
-          <img class="host__image" alt="Screenshot" />
-        </div>
-      </article>
-    </template>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
-
-
-
-

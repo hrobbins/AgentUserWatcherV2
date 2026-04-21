@@ -1,43 +1,43 @@
 const express = require('express');
 
-function createActivityRouter(store) {
+function createActivityRouter(store, { agentToken } = {}) {
   const router = express.Router();
+
+  function requireAgentToken(req, res, next) {
+    if (!agentToken) return next();
+    if (req.get('X-Agent-Token') !== agentToken) {
+      return res.status(401).json({ message: 'Invalid agent token' });
+    }
+    next();
+  }
 
   router.get('/', (req, res) => {
     res.json({
-      hosts: store.getAll(),
+      samples: store.getSamples({ limit: Number(req.query.limit) || 200 }),
+      today: store.getToday(),
     });
   });
 
-  router.get('/:hostId', (req, res) => {
-    const hostId = req.params.hostId;
-    const activity = store.get(hostId);
-    if (!activity) {
-      res.status(404).json({ message: 'Host not found' });
-      return;
-    }
-    res.json(activity);
-  });
-
-  router.post('/:hostId', (req, res) => {
-    const hostId = req.params.hostId;
-    const payload = req.body;
-
-    if (!payload || !payload.summary) {
-      res.status(400).json({ message: 'Field "summary" is required' });
-      return;
-    }
-
+  router.post('/sample', requireAgentToken, (req, res) => {
     try {
-      const entry = store.upsert(hostId, payload);
-      res.status(201).json(entry);
-    } catch (error) {
-      console.error('Failed to store activity', error);
-      res.status(500).json({ message: 'Failed to store activity', error: error.message });
+      const entry = store.addSample(req.body || {});
+      res.status(201).json({ ok: true, id: entry.ts });
+    } catch (err) {
+      console.error('addSample failed', err);
+      res.status(500).json({ message: 'Failed to store sample', error: err.message });
     }
   });
 
-  router.delete('/', (req, res) => {
+  router.post('/today', requireAgentToken, (req, res) => {
+    try {
+      store.setToday(req.body || null);
+      res.status(204).end();
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.delete('/', requireAgentToken, (req, res) => {
     store.clear();
     res.status(204).end();
   });
@@ -45,7 +45,4 @@ function createActivityRouter(store) {
   return router;
 }
 
-module.exports = {
-  createActivityRouter,
-};
-
+module.exports = { createActivityRouter };

@@ -1,10 +1,7 @@
 {
   "port": 4000,
   "screenshotDirectory": "public/screenshots",
-  "screenshotRetentionMinutes": 120,
-  "maxStoredHosts": 25,
-  "enableCors": true
+  "screenshotRetentionMinutes": 10080,
+  "enableCors": true,
+  "agentToken": "change-me-shared-secret"
 }
-
-
-

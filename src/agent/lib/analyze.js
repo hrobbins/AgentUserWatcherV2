@@ -1,261 +1,187 @@
 const sharp = require('sharp');
 const axios = require('axios');
 
-async function analyzeActivity({ buffer, enableOcr, enableColor, enableLmStudio, includeWindowTitle, tesseract, host, lmStudioConfig }) {
-  const details = {};
-  let summaryParts = [];
-  let confidence = null;
+const CATEGORIES = ['SCHOOL_WORK', 'NON_SCHOOL', 'LOCKED_INACTIVE'];
 
-  // LM Studio analysis takes priority if enabled
-  if (enableLmStudio && lmStudioConfig) {
-    try {
-      const lmResult = await analyzeWithLmStudio(buffer, lmStudioConfig);
-      details.lmStudioAnalysis = lmResult.analysis;
-      details.activityType = lmResult.activityType;
-      details.isSchoolWork = lmResult.isSchoolWork;
-      details.isLocked = lmResult.isLocked;
-      details.category = lmResult.category;
-      summaryParts.push(lmResult.summary);
-      confidence = lmResult.confidence;
-    } catch (error) {
-      details.lmStudioError = error.message;
-      console.error('LM Studio analysis failed:', error.message);
-      // Fall back to other methods if LM Studio fails
+function createAnalyzer({ llmConfig, subjects, logger = console }) {
+  const callTimestamps = [];
+  const cache = new Map();
+
+  function pruneRateWindow() {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    while (callTimestamps.length && callTimestamps[0] < cutoff) {
+      callTimestamps.shift();
     }
   }
 
-  if (enableColor) {
-    const colorInfo = await extractDominantColor(buffer);
-    details.dominantColor = colorInfo;
-    if (!summaryParts.length) {
-      summaryParts.push(`Dominant color ${colorInfo.hex}`);
+  function canCall() {
+    pruneRateWindow();
+    return callTimestamps.length < (llmConfig.maxCallsPerHour || 120);
+  }
+
+  function cacheKey(windowMeta) {
+    return `${windowMeta.processName}::${windowMeta.title}`;
+  }
+
+  function getCached(windowMeta) {
+    const key = cacheKey(windowMeta);
+    const hit = cache.get(key);
+    if (!hit) return null;
+    const ttlMs = (llmConfig.cacheWindowSeconds || 60) * 1000;
+    if (Date.now() - hit.timestamp > ttlMs) return null;
+    return hit.result;
+  }
+
+  function setCached(windowMeta, result) {
+    const key = cacheKey(windowMeta);
+    cache.set(key, { timestamp: Date.now(), result });
+    if (cache.size > 200) {
+      const oldest = [...cache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
+      cache.delete(oldest[0]);
     }
   }
 
-  if (enableOcr) {
-    try {
-      const text = await runOcr(buffer, tesseract);
-      details.ocrText = text;
-      if (text.trim() && !summaryParts.length) {
-        summaryParts.push(`Detected text snippet: "${text.substring(0, 60).trim()}"`);
-        confidence = 0.8;
-      }
-    } catch (error) {
-      details.ocrError = error.message;
+  async function classify({ buffer, windowMeta, context = 'foreground' }) {
+    const cached = getCached(windowMeta);
+    if (cached) {
+      return { ...cached, cached: true };
     }
-  }
 
-  if (includeWindowTitle && host.windowTitle) {
-    summaryParts.push(`Window: ${host.windowTitle}`);
-  }
+    if (!canCall()) {
+      throw new Error('LLM hourly rate limit reached');
+    }
 
-  if (!summaryParts.length) {
-    summaryParts = ['Unknown activity'];
-  }
+    const resized = await sharp(buffer)
+      .resize(llmConfig.resizeWidth || 1280, llmConfig.resizeHeight || 800, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .png()
+      .toBuffer();
 
-  return {
-    summary: summaryParts.join(' | '),
-    confidence,
-    details,
-  };
-}
+    const base64 = resized.toString('base64');
+    const prompt = buildPrompt(subjects, windowMeta, context);
+    const url = `${llmConfig.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
 
-async function analyzeWithLmStudio(imageBuffer, config) {
-  const startTime = Date.now();
-  
-  // Resize image to reduce processing time and payload size
-  // Most vision models work well with 1024px or smaller images
-  const resizedBuffer = await sharp(imageBuffer)
-    .resize(config.resizeWidth || 1024, config.resizeHeight || 1024, { 
-      fit: 'inside',
-      withoutEnlargement: true 
-    })
-    .png()
-    .toBuffer();
-  
-  const base64Image = resizedBuffer.toString('base64');
-  const imageSizeKB = Math.round(base64Image.length / 1024);
-  
-  console.log(`[LM Studio] Sending ${imageSizeKB}KB image to ${config.model}`);
-  
-  const prompt = `You are analyzing a screenshot from a computer to determine if the user is doing school-related work, non-school activities, or if the screen is locked/inactive.
+    const startedAt = Date.now();
+    callTimestamps.push(startedAt);
 
-Analyze this screenshot and provide:
-1. A brief description of what you see (1-2 sentences)
-2. Which category this falls into: SCHOOL_WORK, NON_SCHOOL, or LOCKED_INACTIVE
-3. A specific category (e.g., "Mathematics", "Writing", "Gaming", "Social Media", "Lock Screen", "Screen Saver", etc.)
-4. Your confidence level (0.0 to 1.0)
-
-Respond in this exact JSON format:
-{
-  "description": "brief description here",
-  "activityType": "SCHOOL_WORK" or "NON_SCHOOL" or "LOCKED_INACTIVE",
-  "category": "category name",
-  "confidence": 0.0 to 1.0
-}
-
-SCHOOL_WORK includes:
-- Educational content (textbooks, academic articles, learning platforms)
-- Math/science problems or equations
-- Programming for coursework
-- Research or writing assignments
-- Educational videos or lectures
-- Study materials or notes
-
-NON_SCHOOL includes:
-- Social media (Facebook, Twitter, Instagram, TikTok, etc.)
-- Entertainment (gaming, Netflix, YouTube entertainment, etc.)
-- Personal communication (messaging, email not related to school)
-- Shopping or browsing for non-educational purposes
-- General web browsing for entertainment
-
-LOCKED_INACTIVE includes:
-- Lock screens or login screens
-- Screen savers
-- Blank/black screens with no activity
-- System dialogs blocking access (e.g., password prompts, UAC dialogs)
-- "Away" or "Do Not Disturb" screens
-- Screensaver patterns or images
-- Any screen that prevents normal computer use`;
-
-  try {
     const response = await axios.post(
-      config.apiUrl,
+      url,
       {
-        model: config.model,
+        model: llmConfig.model || 'auto',
         messages: [
           {
             role: 'user',
             content: [
-              {
-                type: 'text',
-                text: prompt
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:image/png;base64,${base64Image}`
-                }
-              }
-            ]
-          }
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+            ],
+          },
         ],
-        max_tokens: config.maxTokens || 300,
-        temperature: config.temperature || 0.3
+        max_tokens: llmConfig.maxTokens || 400,
+        temperature: llmConfig.temperature ?? 0.2,
       },
       {
-        timeout: config.timeoutMs || 180000,
-        headers: {
-          'Content-Type': 'application/json'
-        }
+        timeout: llmConfig.timeoutMs || 60000,
+        headers: { 'Content-Type': 'application/json' },
       }
     );
 
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`[LM Studio] Response received in ${elapsed}s`);
+    const elapsed = Date.now() - startedAt;
+    const content = response.data?.choices?.[0]?.message?.content || '';
+    const parsed = parseJsonLoose(content);
+    const result = normalize(parsed, subjects, { elapsed, raw: content });
 
-    const content = response.data.choices[0].message.content;
-    
-    // Try to parse JSON response
-    let parsed;
-    try {
-      // Extract JSON from markdown code blocks if present
-      const jsonMatch = content.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/) || content.match(/(\{[\s\S]*\})/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[1]);
-      } else {
-        throw new Error('No JSON found in response');
-      }
-    } catch (parseError) {
-      // If parsing fails, create a basic response from the text
-      console.warn('Failed to parse LM Studio JSON response, using text fallback');
-      const isLocked = /lock.*screen|screen.*saver|locked|inactive|login|password|blocked/i.test(content);
-      const isSchool = !isLocked && /school.*work|educational|study|homework|assignment/i.test(content);
-      
-      let activityType = 'NON_SCHOOL';
-      let category = 'Non-School Activity';
-      
-      if (isLocked) {
-        activityType = 'LOCKED_INACTIVE';
-        category = 'Locked/Inactive';
-      } else if (isSchool) {
-        activityType = 'SCHOOL_WORK';
-        category = 'School Work';
-      }
-      
-      parsed = {
-        description: content.substring(0, 150),
-        activityType: activityType,
-        category: category,
-        confidence: 0.5
-      };
-    }
-
-    // Determine emoji based on activity type
-    let emoji = '🎮'; // NON_SCHOOL
-    let label = 'NON-SCHOOL';
-    
-    if (parsed.activityType === 'SCHOOL_WORK') {
-      emoji = '📚';
-      label = 'SCHOOL WORK';
-    } else if (parsed.activityType === 'LOCKED_INACTIVE') {
-      emoji = '🔒';
-      label = 'LOCKED/INACTIVE';
-    }
-
-    return {
-      analysis: content,
-      activityType: parsed.activityType,
-      isSchoolWork: parsed.activityType === 'SCHOOL_WORK',
-      isLocked: parsed.activityType === 'LOCKED_INACTIVE',
-      category: parsed.category,
-      confidence: parsed.confidence,
-      summary: `${emoji} ${label}: ${parsed.category} - ${parsed.description}`
-    };
-  } catch (error) {
-    if (error.code === 'ECONNREFUSED') {
-      throw new Error('LM Studio API not available. Make sure LM Studio is running on ' + config.apiUrl);
-    }
-    throw new Error(`LM Studio API error: ${error.message}`);
-  }
-}
-
-async function extractDominantColor(buffer) {
-  const { data } = await sharp(buffer)
-    .resize(32, 32, { fit: 'inside' })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  const totalPixels = data.length / 3;
-  for (let i = 0; i < data.length; i += 3) {
-    r += data[i];
-    g += data[i + 1];
-    b += data[i + 2];
+    setCached(windowMeta, result);
+    return { ...result, cached: false };
   }
 
-  r = Math.round(r / totalPixels);
-  g = Math.round(g / totalPixels);
-  b = Math.round(b / totalPixels);
-
-  const hex = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-
-  return { r, g, b, hex };
+  return { classify };
 }
 
-function toHex(value) {
-  return value.toString(16).padStart(2, '0');
+function buildPrompt(subjects, windowMeta, context) {
+  const subjectList = subjects.map((s) => `"${s}"`).join(', ');
+  const meta = [
+    windowMeta.processName ? `process: ${windowMeta.processName}` : '',
+    windowMeta.title ? `window title: ${windowMeta.title}` : '',
+    windowMeta.exePath ? `exe: ${windowMeta.exePath}` : '',
+  ]
+    .filter(Boolean)
+    .join(' | ');
+
+  return `You are a study-coach classifier looking at a screenshot from a high-school student's computer.
+Context source: ${context} (either "foreground" for the active window, or "background_sweep" for the full screen).
+Foreground window metadata: ${meta || 'none'}
+
+Return ONLY a single JSON object with these fields:
+{
+  "description": string (1-2 sentences describing what's on screen),
+  "category": one of ${CATEGORIES.map((c) => `"${c}"`).join(', ')},
+  "subject": one of [${subjectList}] or null if not applicable,
+  "subject_detail": short free-text sub-label (e.g. "Algebra II homework", "novel chapter 7") or null,
+  "confidence": number 0.0-1.0,
+  "distraction_severity": integer 0-3 (0=on-task/idle, 1=mild drift, 2=clearly off-task like general gaming/social media, 3=explicitly blocked category such as short-form video feeds, gambling, adult content),
+  "quiz_completed": boolean (true ONLY if this screen shows a graded results/score page for a quiz/test/assignment that was just finished),
+  "assessment_type": one of "quiz", "unit_test", "midterm", "final", "semester_exam", or null
 }
 
-async function runOcr(buffer, tesseract) {
-  const { data } = await tesseract.recognize(buffer, 'eng');
-  return data.text || '';
+SCHOOL_WORK = schoolwork tied to a recognizable subject: textbooks, learning platforms (Khan Academy, IXL, Duolingo, Canvas, Google Classroom), math/science problems, research/writing assignments, programming coursework, educational video lectures. "Independent Project" is also schoolwork and includes legitimate long-form creative/technical work: writing hard-SF novels, training ML/RL agents, running a small business, game development, electronics projects. IDE/terminal work counts as Independent Project or CS-related schoolwork.
+NON_SCHOOL = gaming, social media, short-form video feeds (YouTube Shorts, TikTok, Reels), entertainment streaming unrelated to class, shopping, chatting.
+LOCKED_INACTIVE = lock screens, screensavers, blank screens, UAC/password prompts.
+
+Be conservative with quiz_completed — only true on an actual score/results page, not on a question page.
+Respond with ONLY the JSON, no prose, no code fences.`;
+}
+
+function parseJsonLoose(text) {
+  if (!text) return null;
+  const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  if (fenced) {
+    try { return JSON.parse(fenced[1]); } catch (_) {}
+  }
+  const braced = text.match(/\{[\s\S]*\}/);
+  if (braced) {
+    try { return JSON.parse(braced[0]); } catch (_) {}
+  }
+  return null;
+}
+
+function normalize(parsed, subjects, extra) {
+  const safe = parsed || {};
+  const category = CATEGORIES.includes(safe.category) ? safe.category : 'NON_SCHOOL';
+  const subject = subjects.includes(safe.subject) ? safe.subject : null;
+  const severity = clampInt(safe.distraction_severity, 0, 3, category === 'NON_SCHOOL' ? 2 : 0);
+  const assessment = ['quiz', 'unit_test', 'midterm', 'final', 'semester_exam'].includes(safe.assessment_type)
+    ? safe.assessment_type
+    : null;
+  return {
+    description: String(safe.description || '').slice(0, 500),
+    category,
+    subject,
+    subjectDetail: safe.subject_detail ? String(safe.subject_detail).slice(0, 120) : null,
+    confidence: clampFloat(safe.confidence, 0, 1, 0.5),
+    distractionSeverity: severity,
+    quizCompleted: Boolean(safe.quiz_completed),
+    assessmentType: assessment,
+    elapsedMs: extra.elapsed,
+    raw: extra.raw,
+  };
+}
+
+function clampInt(v, lo, hi, fallback) {
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function clampFloat(v, lo, hi, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
 }
 
 module.exports = {
-  analyzeActivity,
+  createAnalyzer,
+  CATEGORIES,
 };
-

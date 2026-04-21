@@ -1,35 +1,69 @@
 {
-  "hosts": [
-    {
-      "id": "nathan-host",
-      "host": "10.0.4.101",
-      "port": 5901,
-      "password": "2011",
-      "description": "Nathan VNC connection",
-      "_security": "none"
-    }
-  ],
-  "pollIntervalMs": 300000,
-  "analysis": {
-    "ocr": false,
-    "dominantColor": false,
-    "lmStudio": true
-  },
-  "lmStudio": {
-    "apiUrl": "http://localhost:1234/v1/chat/completions",
-    "model": "gemma-3-12b-it-GGUF/gemma-3-12b-it-Q4_K_M.gguf",
-    "maxTokens": 300,
-    "temperature": 0.3,
-    "timeoutMs": 180000,
-    "resizeWidth": 1024,
-    "resizeHeight": 1024
-  },
-  "serverUrl": "http://localhost:4000/api/activity",
-  "includeWindowTitle": true,
+  "pollIntervalMs": 60000,
+  "backgroundSweepEvery": 5,
+  "idleThresholdSeconds": 120,
   "saveScreenshotsLocally": false,
-  "localScreenshotDirectory": "screenshots"
+  "localScreenshotDirectory": "agent-screenshots",
+  "serverUrl": "http://localhost:4000/api/activity",
+  "agentToken": "change-me-shared-secret",
+
+  "llm": {
+    "baseUrl": "http://10.0.4.9:3838",
+    "model": "auto",
+    "maxTokens": 400,
+    "temperature": 0.2,
+    "timeoutMs": 60000,
+    "resizeWidth": 1280,
+    "resizeHeight": 800,
+    "maxCallsPerHour": 120,
+    "cacheWindowSeconds": 60,
+    "degradedAfterConsecutiveFailures": 2
+  },
+
+  "subjects": [
+    "Math",
+    "Science",
+    "English",
+    "Social Studies",
+    "PE",
+    "Foreign Language",
+    "Art/Elective",
+    "Independent Project"
+  ],
+
+  "ledger": {
+    "dbPath": "ledger.db",
+    "unitThresholdMinutes": 30,
+    "dailyUnitGoal": 12,
+    "maxUnitsPerSubject": 2,
+    "quizMinPriorActiveMinutes": 8,
+    "screenshotRetentionDays": 7
+  },
+
+  "peSchedule": {
+    "windowStartHour": 15,
+    "windowEndHour": 17,
+    "byWeekday": {
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 2,
+      "5": 2
+    }
+  },
+
+  "enforcement": {
+    "mode": "observe",
+    "fadeOutSeconds": 300,
+    "fadeInSeconds": 300,
+    "breakMinutes": 5,
+    "distractionThreshold": 2,
+    "degradedFadeSeconds": 60
+  },
+
+  "calendar": {
+    "holidays": [],
+    "summerStart": null,
+    "summerEnd": null
+  }
 }
-
-
-
-

@@ -12,16 +12,15 @@ const { createClassificationsRouter } = require('./routes/classifications');
 const serverConfig = loadConfig('server.json', {
   port: 4000,
   screenshotDirectory: 'public/screenshots',
-  screenshotRetentionMinutes: 120,
-  maxStoredHosts: 25,
+  screenshotRetentionMinutes: 7 * 24 * 60,
   enableCors: true,
-});
+  agentToken: 'change-me-shared-secret',
+}, 'SERVER');
 
 const app = express();
 if (serverConfig.enableCors) {
   app.use(cors());
 }
-
 app.use(morgan('dev'));
 app.use(express.json({ limit: '100mb' }));
 
@@ -31,10 +30,9 @@ fs.mkdirSync(screenshotDir, { recursive: true });
 const store = createActivityStore({
   screenshotDir,
   retentionMinutes: serverConfig.screenshotRetentionMinutes,
-  maxHosts: serverConfig.maxStoredHosts,
 });
 
-app.use('/api/activity', createActivityRouter(store));
+app.use('/api/activity', createActivityRouter(store, { agentToken: serverConfig.agentToken }));
 app.use('/api/stream', createSseRouter(store));
 app.use('/api/classifications', createClassificationsRouter(store));
 
@@ -50,7 +48,7 @@ process.on('SIGINT', () => {
   server.close(() => process.exit(0));
 });
 
+process.on('uncaughtException', (err) => console.error('uncaught:', err));
+process.on('unhandledRejection', (reason) => console.error('unhandled:', reason));
+
 module.exports = app;
-
-
-

@@ -1,9 +1,13 @@
 node_modules
 public/screenshots
+screenshots
 agent-screenshots
 .env
 npm-debug.log*
-
-
-
-
+.DS_Store
+*.log
+ledger.db
+ledger.db-shm
+ledger.db-wal
+eng.traineddata
+.clawd/
