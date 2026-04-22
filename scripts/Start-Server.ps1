@@ -1,4 +1,4 @@
-# AgentUserWatcher — Dashboard Server
+# AgentUserWatcher - Dashboard Server
 # Run this as Administrator (script will self-elevate if needed)
 
 param()
@@ -13,9 +13,9 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-$Host.UI.RawUI.WindowTitle = "AgentUserWatcher — Server"
+$Host.UI.RawUI.WindowTitle = "AgentUserWatcher - Server"
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  AgentUserWatcher — Dashboard Server" -ForegroundColor Cyan
+Write-Host "  AgentUserWatcher - Dashboard Server" -ForegroundColor Cyan
 Write-Host "  http://localhost:4000" -ForegroundColor Cyan
 Write-Host "============================================================"
 Write-Host ""

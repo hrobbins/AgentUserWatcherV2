@@ -1,5 +1,5 @@
-# AgentUserWatcher — Monitoring Agent
-# Run this as Administrator — screen capture requires admin rights
+# AgentUserWatcher - Monitoring Agent
+# Run this as Administrator -- screen capture requires admin rights
 
 param()
 
@@ -13,9 +13,9 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-$Host.UI.RawUI.WindowTitle = "AgentUserWatcher — Agent"
+$Host.UI.RawUI.WindowTitle = "AgentUserWatcher - Agent"
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  AgentUserWatcher — Monitoring Agent" -ForegroundColor Cyan
+Write-Host "  AgentUserWatcher - Monitoring Agent" -ForegroundColor Cyan
 Write-Host "============================================================"
 Write-Host ""
 

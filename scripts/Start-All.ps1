@@ -1,4 +1,4 @@
-# AgentUserWatcher — Start Everything
+# AgentUserWatcher - Start Everything
 # Opens the server and agent in separate admin PowerShell windows.
 
 param()
