@@ -338,6 +338,11 @@ function createLedger({ dbPath, config }) {
     return row ? row.value : 0;
   }
 
+  function awardManual(date, subject, amount, note) {
+    insertUnit({ date, subject, source: 'manual', amount: Number(amount) || 1, note: note || 'Manual award' });
+    return { subject, amount: Number(amount) || 1, source: 'manual' };
+  }
+
   return {
     db,
     ensureDay,
@@ -345,6 +350,7 @@ function createLedger({ dbPath, config }) {
     accrueFromSample,
     seedPeIfDue,
     awardPeBreak,
+    awardManual,
     openDegraded,
     closeDegraded,
     snapshotToday,

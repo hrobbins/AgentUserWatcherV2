@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    background: transparent;
+    overflow: hidden;
+    font-family: "Segoe UI", sans-serif;
+    color: #fff;
+    user-select: none;
+  }
+
+  /* ── dim layer ── */
+  #dim {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    transition: opacity 1.2s ease-in-out;
+    pointer-events: none;
+  }
+
+  /* ── break screen (full-screen) ── */
+  #break {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+    z-index: 20;
+  }
+  #break h1 { font-size: 48px; margin: 0 0 12px; font-weight: 300; }
+  #countdown { font-size: 96px; font-weight: 200; font-variant-numeric: tabular-nums; }
+  #break-msg { margin-top: 20px; font-size: 18px; opacity: 0.75; max-width: 60ch; }
+
+  /* ── progress HUD (bottom-right corner) ── */
+  #hud {
+    position: fixed;
+    bottom: 28px;
+    right: 28px;
+    width: 260px;
+    background: rgba(0,0,0,0.72);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 14px 16px 12px;
+    z-index: 30;
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    transition: opacity 0.8s ease-in-out;
+  }
+  #hud.visible { opacity: 1; }
+
+  .hud-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.5;
+    margin-bottom: 8px;
+  }
+
+  /* progress bar */
+  .prog-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .prog-segs {
+    display: flex;
+    gap: 3px;
+    flex: 1;
+  }
+  .prog-seg {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.15);
+  }
+  .prog-seg.on { background: #4caf50; }
+  .prog-label {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+
+  /* subject grid */
+  .subj-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .subj-item {
+    display: flex;
+    flex-direction: column;
+    background: rgba(255,255,255,0.06);
+    border-radius: 5px;
+    padding: 5px 7px;
+    font-size: 10px;
+  }
+  .subj-item.active { background: rgba(76,175,80,0.2); }
+  .subj-item.capped { background: rgba(76,175,80,0.35); }
+  .subj-item.disabled { opacity: 0.3; filter: grayscale(1); }
+  .subj-name { opacity: 0.7; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .subj-units { font-weight: 600; font-size: 11px; }
+  .subj-pending {
+    height: 2px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 1px;
+    margin-top: 3px;
+    overflow: hidden;
+  }
+  .subj-pending-fill {
+    height: 100%;
+    background: rgba(255,255,255,0.5);
+    border-radius: 1px;
+  }
+
+  /* break mode: embed hud in break screen */
+  #break #hud {
+    position: static;
+    margin-top: 36px;
+    width: 280px;
+    opacity: 1;
+  }
+
+  #hint {
+    position: fixed;
+    bottom: 10px;
+    left: 14px;
+    font-size: 10px;
+    opacity: 0.3;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+  <div id="dim"></div>
+
+  <div id="break">
+    <h1>Take a break</h1>
+    <div id="countdown">5:00</div>
+    <div id="break-msg"></div>
+    <div id="hud-break"><!-- injected --></div>
+  </div>
+
+  <div id="hud">
+    <div class="hud-title">Today's progress</div>
+    <div class="prog-row">
+      <div class="prog-segs" id="prog-segs"></div>
+      <div class="prog-label" id="prog-label">0 / 12</div>
+    </div>
+    <div class="subj-grid" id="subj-grid"></div>
+  </div>
+
+  <div id="hint">Ctrl+Shift+Alt+P — parent override</div>
+
+<script>
+  const SUBJECTS = [
+    'Math','Science','English','Social Studies',
+    'PE','Foreign Language','Art/Elective','Independent Project',
+  ];
+
+  const dim = document.getElementById('dim');
+  const breakEl = document.getElementById('break');
+  const countdownEl = document.getElementById('countdown');
+  const breakMsgEl = document.getElementById('break-msg');
+  const hud = document.getElementById('hud');
+  const hudBreak = document.getElementById('hud-break');
+  const progSegs = document.getElementById('prog-segs');
+  const progLabel = document.getElementById('prog-label');
+  const subjGrid = document.getElementById('subj-grid');
+
+  let breakEndsAt = 0;
+  let tickInterval = null;
+
+  function fmt(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    return `${Math.floor(sec/60)}:${String(sec%60).padStart(2,'0')}`;
+  }
+
+  function tick() {
+    if (!breakEndsAt) return;
+    countdownEl.textContent = fmt((breakEndsAt - Date.now()) / 1000);
+  }
+
+  function renderProgress(today, subjectConfigs) {
+    if (!today) return;
+    const { total = 0, goal = 12, perSubject = [], pendingMinutes = [] } = today;
+    const configs = subjectConfigs || {};
+
+    // Segments
+    progSegs.innerHTML = '';
+    for (let i = 0; i < goal; i++) {
+      const seg = document.createElement('div');
+      seg.className = 'prog-seg' + (i < total ? ' on' : '');
+      progSegs.appendChild(seg);
+    }
+    progLabel.textContent = `${Math.floor(total)} / ${goal}`;
+
+    // Subjects
+    const byName = new Map();
+    SUBJECTS.forEach(s => byName.set(s, { subject: s, units: 0 }));
+    perSubject.forEach(r => { if (byName.has(r.subject)) byName.get(r.subject).units = r.units; });
+    const pendMap = new Map();
+    pendingMinutes.forEach(r => pendMap.set(r.subject, r));
+
+    subjGrid.innerHTML = '';
+    byName.forEach(v => {
+      const cap = 2;
+      const disabled = configs[v.subject] && configs[v.subject].enabled === false;
+      const capped = !disabled && v.units >= cap;
+      const active = !disabled && v.units > 0 && !capped;
+      const pend = pendMap.get(v.subject);
+      const pct = (!disabled && pend) ? Math.min(100, (pend.pending_minutes / 30) * 100) : 0;
+
+      const el = document.createElement('div');
+      el.className = 'subj-item' + (capped ? ' capped' : active ? ' active' : '') + (disabled ? ' disabled' : '');
+      el.innerHTML = `
+        <div class="subj-name">${v.subject}</div>
+        <div class="subj-units">${disabled ? 'off' : `${Math.floor(v.units)}/${cap}${capped ? ' ✓' : ''}`}</div>
+        <div class="subj-pending"><div class="subj-pending-fill" style="width:${pct}%"></div></div>
+      `;
+      subjGrid.appendChild(el);
+    });
+
+    // Mirror into break screen
+    hudBreak.innerHTML = hud.innerHTML;
+  }
+
+  window.overlay.onState((state) => {
+    const opacity = state.opacity || 0;
+    dim.style.opacity = String(opacity);
+
+    // Show HUD when dim is active (opacity > 0) or during break
+    if (opacity > 0.05 || state.breakMode) {
+      hud.classList.add('visible');
+    } else {
+      hud.classList.remove('visible');
+    }
+
+    renderProgress(state.today, state.subjectConfigs);
+
+    if (state.breakMode) {
+      breakEl.style.display = 'flex';
+      hud.classList.remove('visible');
+      // Only re-anchor when the agent sends a new breakEndsAt value.
+      // Ignoring repeated state polls prevents the countdown from jumping.
+      if (state.breakEndsAt && state.breakEndsAt !== breakEndsAt) {
+        breakEndsAt = state.breakEndsAt;
+      }
+      breakMsgEl.textContent = state.message || 'Step away from the screen.';
+      if (!tickInterval) tickInterval = setInterval(tick, 500);
+      tick();
+    } else {
+      breakEl.style.display = 'none';
+      breakEndsAt = 0;
+      if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+    }
+  });
+</script>
+</body>
+</html>

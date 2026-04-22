@@ -59,20 +59,26 @@ function renderSubjects() {
   if (today && today.pendingMinutes) {
     today.pendingMinutes.forEach((row) => pendingMap.set(row.subject, row));
   }
+  const subjectConfigs = (today && today.subjectConfigs) || {};
 
   subjectGridEl.innerHTML = '';
   byName.forEach((v) => {
     const cap = 2;
+    const disabled = subjectConfigs[v.subject] && subjectConfigs[v.subject].enabled === false;
     const card = document.createElement('div');
     const pending = pendingMap.get(v.subject);
     const pctToNext = pending ? Math.min(100, (pending.pending_minutes / 30) * 100) : 0;
     const capped = v.units >= cap;
-    card.className = 'subject' + (capped ? ' subject--capped' : '') + (v.units > 0 ? ' subject--active' : '');
+    card.className = 'subject'
+      + (capped ? ' subject--capped' : '')
+      + (v.units > 0 && !disabled ? ' subject--active' : '')
+      + (disabled ? ' subject--disabled' : '');
+    card.title = disabled ? `${v.subject} is disabled — no credit earned` : '';
     card.innerHTML = `
-      <div class="subject__name">${v.subject}</div>
-      <div class="subject__units">${Math.floor(v.units)} / ${cap}${capped ? ' ✓' : ''}</div>
-      <div class="subject__pending"><div class="subject__pending-bar" style="width:${pctToNext}%"></div></div>
-      <div class="subject__meta">${pending ? `${Math.round(pending.pending_minutes)} min toward next unit` : ''}</div>
+      <div class="subject__name">${v.subject}${disabled ? ' <span class="subject__off-tag">off</span>' : ''}</div>
+      <div class="subject__units">${disabled ? '—' : `${Math.floor(v.units)} / ${cap}${capped ? ' ✓' : ''}`}</div>
+      <div class="subject__pending"><div class="subject__pending-bar" style="width:${disabled ? 0 : pctToNext}%"></div></div>
+      <div class="subject__meta">${!disabled && pending ? `${Math.round(pending.pending_minutes)} min toward next unit` : ''}</div>
     `;
     subjectGridEl.appendChild(card);
   });

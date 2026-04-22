@@ -16,3 +16,6 @@ if [ ! -d "node_modules" ]; then
 fi
 
 npm run server
+echo ""
+echo "Server exited."
+read -p "Press Enter to close..."

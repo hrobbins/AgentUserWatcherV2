@@ -6,6 +6,7 @@
   "scripts": {
     "server": "node src/server/index.js",
     "agent": "node src/agent/index.js",
+    "overlay": "electron src/overlay/main.js",
     "lint": "echo \"No linting configured\""
   },
   "keywords": [],
@@ -21,5 +22,8 @@
     "screenshot-desktop": "^1.15.0",
     "sharp": "^0.34.4",
     "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
   }
 }

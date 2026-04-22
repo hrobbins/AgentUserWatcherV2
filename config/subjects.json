@@ -1,0 +1,34 @@
+{
+  "Math": {
+    "enabled": true,
+    "detail": "Math is (AP) Statistics via Edmentum and Kahn Academy, which may involve him looking up additional material on the web, or using ChatGPT for reference."
+  },
+  "Science": {
+    "enabled": true,
+    "detail": "Science course curriculum is High School Biology via Canvas (web), he may use ZeroGPT and AI Humanize web pages for writing tasks."
+  },
+  "English": {
+    "enabled": true,
+    "detail": "English course curriculum is 9th grade English via Canvas (web), he may use ZeroGPT and AI Humanize web pages for writing tasks.  May also involve referencing 3rd party sources, depending on the task.  Might also involve using Google Docs and ChatGPT type resources for writing."
+  },
+  "Social Studies": {
+    "enabled": true,
+    "detail": "Social Studies course High School World History curriculum is via Canvas (web), he may use ZeroGPT and AI Humanize web pages for writing tasks.  May also involve referencing 3rd party sources like Wikipedia, Encyclopedia Britanica, C-Span, cambridge.org or other university web sites, OECD, etc. depending on the task. Might also involve using Google Docs and ChatGPT type resources for writing."
+  },
+  "PE": {
+    "enabled": true,
+    "detail": "PE will mostly be done off the computer, but any videos involving exercises, breathing techniques, archery, compound bow hunting, running, push-ups, etc. count towards PE."
+  },
+  "Foreign Language": {
+    "enabled": true,
+    "detail": "Foreign Langauge course curriculum is Latin via Rosetta Stone (web), he may use ZeroGPT and AI Humanize web pages for writing tasks."
+  },
+  "Art/Elective": {
+    "enabled": false,
+    "detail": ""
+  },
+  "Independent Project": {
+    "enabled": false,
+    "detail": ""
+  }
+}

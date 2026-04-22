@@ -16,3 +16,6 @@ if [ ! -d "node_modules" ]; then
 fi
 
 npm run agent
+echo ""
+echo "Agent exited."
+read -p "Press Enter to close..."

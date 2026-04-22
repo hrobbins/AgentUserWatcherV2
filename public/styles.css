@@ -66,7 +66,14 @@ body { margin: 0; background: var(--bg); color: var(--fg); }
 }
 .subject--active { border-color: rgba(74, 222, 128, 0.5); }
 .subject--capped { border-color: var(--good); }
+.subject--disabled { opacity: 0.35; filter: grayscale(1); }
 .subject__name { font-weight: 600; }
+.subject__off-tag {
+  display: inline-block; font-size: 0.65rem; font-weight: 500;
+  color: var(--muted); background: var(--card-2);
+  padding: 1px 5px; border-radius: 3px; margin-left: 5px;
+  vertical-align: middle; letter-spacing: 0.04em; text-transform: uppercase;
+}
 .subject__units { font-size: 1.5rem; font-weight: 700; margin-top: 0.25rem; }
 .subject__pending {
   background: var(--card-2); height: 4px; border-radius: 2px;

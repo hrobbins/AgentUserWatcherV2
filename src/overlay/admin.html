@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Admin — Subject Settings</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: "Segoe UI", sans-serif; background: #1a1a2e; color: #e0e0e0; font-size: 14px; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; background: #16213e; border-bottom: 1px solid #2a2a4a;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; font-weight: 500; color: #a0c4ff; }
+  #status { font-size: 12px; color: #6b7280; min-height: 16px; }
+
+  .save-btn {
+    padding: 7px 20px; background: #3b82f6; color: #fff; border: 0;
+    border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 500;
+  }
+  .save-btn:hover { background: #2563eb; }
+  .save-btn:active { background: #1d4ed8; }
+
+  main { padding: 16px 20px 24px; overflow-y: auto; }
+
+  .section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #6b7280; margin: 20px 0 10px;
+  }
+  .section-title:first-child { margin-top: 0; }
+
+  /* Subject cards */
+  .subject-card {
+    background: #16213e; border: 1px solid #2a2a4a; border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 10px;
+    transition: border-color 0.15s;
+  }
+  .subject-card.disabled { opacity: 0.5; }
+
+  .card-top {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  }
+  .subject-name { font-weight: 600; flex: 1; font-size: 13px; }
+
+  /* toggle switch */
+  .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; inset: 0; background: #374151; border-radius: 20px;
+    cursor: pointer; transition: background 0.2s;
+  }
+  .toggle-slider::before {
+    content: ''; position: absolute; width: 14px; height: 14px;
+    left: 3px; top: 3px; background: #fff; border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle input:checked + .toggle-slider { background: #3b82f6; }
+  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
+
+  textarea.detail {
+    width: 100%; resize: vertical; min-height: 60px; max-height: 160px;
+    background: #0f172a; border: 1px solid #374151; border-radius: 4px;
+    color: #e0e0e0; padding: 7px 9px; font-size: 12px; line-height: 1.5;
+    font-family: inherit;
+  }
+  textarea.detail:focus { outline: none; border-color: #3b82f6; }
+  textarea.detail::placeholder { color: #4b5563; }
+
+  /* Award units section */
+  .award-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  .award-label { font-size: 11px; color: #9ca3af; }
+  .award-input {
+    width: 52px; padding: 4px 7px; background: #0f172a;
+    border: 1px solid #374151; border-radius: 4px; color: #e0e0e0;
+    font-size: 12px; text-align: center;
+  }
+  .award-input:focus { outline: none; border-color: #3b82f6; }
+  .award-btn {
+    padding: 4px 12px; background: #065f46; color: #6ee7b7;
+    border: 1px solid #047857; border-radius: 4px; cursor: pointer; font-size: 11px;
+  }
+  .award-btn:hover { background: #047857; }
+  .award-note { font-size: 11px; color: #9ca3af; }
+  .award-note input {
+    background: #0f172a; border: 1px solid #374151; border-radius: 4px;
+    color: #e0e0e0; padding: 4px 7px; font-size: 11px; width: 140px;
+  }
+  .award-note input:focus { outline: none; border-color: #3b82f6; }
+
+  .units-badge {
+    font-size: 11px; color: #9ca3af; margin-left: auto;
+  }
+  .units-badge span { color: #4ade80; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Admin — Subject Settings</h1>
+  <div id="status"></div>
+  <button class="save-btn" id="save-btn">Save changes</button>
+</header>
+<main id="main">
+  <div style="color:#6b7280; padding: 40px 0; text-align:center;">Loading…</div>
+</main>
+
+<script>
+let state = { subjectConfigs: {}, allSubjects: [], today: null };
+let dirty = false;
+
+const mainEl = document.getElementById('main');
+const statusEl = document.getElementById('status');
+const saveBtn = document.getElementById('save-btn');
+
+function setStatus(msg, color) {
+  statusEl.textContent = msg;
+  statusEl.style.color = color || '#6b7280';
+  if (msg && color === '#4ade80') setTimeout(() => { statusEl.textContent = ''; }, 3000);
+}
+
+function unitsTodayFor(subject) {
+  if (!state.today) return 0;
+  const row = (state.today.perSubject || []).find(r => r.subject === subject);
+  return row ? Math.floor(row.units) : 0;
+}
+
+function buildCard(subject) {
+  const cfg = state.subjectConfigs[subject] || { enabled: true, detail: '' };
+  const todayUnits = unitsTodayFor(subject);
+
+  const card = document.createElement('div');
+  card.className = 'subject-card' + (cfg.enabled ? '' : ' disabled');
+  card.dataset.subject = subject;
+
+  card.innerHTML = `
+    <div class="card-top">
+      <label class="toggle">
+        <input type="checkbox" class="toggle-enabled" ${cfg.enabled ? 'checked' : ''} />
+        <span class="toggle-slider"></span>
+      </label>
+      <div class="subject-name">${subject}</div>
+      <div class="units-badge">today: <span>${todayUnits}</span>/2 units</div>
+    </div>
+    <textarea class="detail" placeholder="Describe what ${subject} work looks like for this student — the LLM uses this to classify screenshots more accurately.">${cfg.detail || ''}</textarea>
+    <div class="award-row">
+      <span class="award-label">Award units today:</span>
+      <input class="award-input" type="number" min="0.5" max="4" step="0.5" value="1" />
+      <span class="award-note"><input type="text" placeholder="Note (optional)" /></span>
+      <button class="award-btn">+ Add</button>
+    </div>
+  `;
+
+  card.querySelector('.toggle-enabled').addEventListener('change', (e) => {
+    card.classList.toggle('disabled', !e.target.checked);
+    markDirty();
+  });
+  card.querySelector('textarea.detail').addEventListener('input', markDirty);
+
+  card.querySelector('.award-btn').addEventListener('click', async () => {
+    const amount = parseFloat(card.querySelector('.award-input').value) || 1;
+    const note = card.querySelector('.award-note input').value.trim() || 'Manual award';
+    const btn = card.querySelector('.award-btn');
+    btn.disabled = true;
+    const res = await window.overlay.awardUnits(subject, amount, state.today?.date, note);
+    btn.disabled = false;
+    if (res.ok) {
+      setStatus(`+${amount} unit(s) queued for ${subject}`, '#4ade80');
+      card.querySelector('.award-input').value = 1;
+      card.querySelector('.award-note input').value = '';
+    }
+  });
+
+  return card;
+}
+
+function render() {
+  if (!state.allSubjects.length) {
+    mainEl.innerHTML = '<div style="color:#6b7280;padding:40px 0;text-align:center;">No subjects loaded yet — agent may not be running.</div>';
+    return;
+  }
+  mainEl.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'section-title';
+  title.textContent = `Subjects — ${state.today?.date || 'today'}`;
+  mainEl.appendChild(title);
+
+  for (const subject of state.allSubjects) {
+    mainEl.appendChild(buildCard(subject));
+  }
+}
+
+function markDirty() {
+  dirty = true;
+  setStatus('Unsaved changes', '#f59e0b');
+}
+
+function collectConfigs() {
+  const configs = {};
+  for (const subject of state.allSubjects) {
+    const card = mainEl.querySelector(`[data-subject="${CSS.escape(subject)}"]`);
+    if (!card) { configs[subject] = state.subjectConfigs[subject] || { enabled: true, detail: '' }; continue; }
+    configs[subject] = {
+      enabled: card.querySelector('.toggle-enabled').checked,
+      detail: card.querySelector('textarea.detail').value.trim(),
+    };
+  }
+  return configs;
+}
+
+saveBtn.addEventListener('click', async () => {
+  const configs = collectConfigs();
+  saveBtn.disabled = true;
+  setStatus('Saving…', '#9ca3af');
+  const res = await window.overlay.saveSubjects(configs);
+  saveBtn.disabled = false;
+  if (res.ok) {
+    dirty = false;
+    setStatus('Saved ✓', '#4ade80');
+    state.subjectConfigs = configs;
+  } else {
+    setStatus('Save failed', '#f87171');
+  }
+});
+
+// Live updates from agent via state file poll
+window.overlay.onState((s) => {
+  const wasEmpty = !state.allSubjects.length;
+  state.today = s.today || state.today;
+  state.allSubjects = s.allSubjects || state.allSubjects;
+  // Only update subjectConfigs from agent if the user hasn't made local edits
+  if (!dirty) {
+    state.subjectConfigs = s.subjectConfigs || state.subjectConfigs;
+  }
+  if (wasEmpty && state.allSubjects.length) render();
+  // Refresh unit badges without full re-render
+  if (state.today) {
+    for (const subject of state.allSubjects) {
+      const badge = mainEl.querySelector(`[data-subject="${CSS.escape(subject)}"] .units-badge span`);
+      if (badge) badge.textContent = unitsTodayFor(subject);
+    }
+  }
+});
+
+// Initial load
+window.overlay.getAdminData().then((data) => {
+  state.subjectConfigs = data.subjectConfigs || {};
+  state.allSubjects = data.allSubjects || [];
+  state.today = data.today;
+  render();
+});
+</script>
+</body>
+</html>

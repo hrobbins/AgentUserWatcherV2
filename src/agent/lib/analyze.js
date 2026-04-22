@@ -3,7 +3,8 @@ const axios = require('axios');
 
 const CATEGORIES = ['SCHOOL_WORK', 'NON_SCHOOL', 'LOCKED_INACTIVE'];
 
-function createAnalyzer({ llmConfig, subjects, logger = console }) {
+function createAnalyzer({ llmConfig, subjects: initialSubjects, logger = console }) {
+  let subjects = initialSubjects;
   const callTimestamps = [];
   const cache = new Map();
 
@@ -60,28 +61,42 @@ function createAnalyzer({ llmConfig, subjects, logger = console }) {
       .toBuffer();
 
     const base64 = resized.toString('base64');
-    const prompt = buildPrompt(subjects, windowMeta, context);
+    const prompt = buildPrompt(subjects, windowMeta, context, llmConfig.subjectDetails || {});
     const url = `${llmConfig.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
 
     const startedAt = Date.now();
     callTimestamps.push(startedAt);
 
+    const messages = [];
+    if (llmConfig.systemPrompt) {
+      messages.push({ role: 'system', content: llmConfig.systemPrompt });
+    }
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+      ],
+    });
+
+    const body = {
+      model: llmConfig.model || 'auto',
+      messages,
+      max_tokens: llmConfig.maxTokens || 400,
+      temperature: llmConfig.temperature ?? 0.2,
+    };
+    if (llmConfig.jsonMode) {
+      body.response_format = { type: 'json_object' };
+    }
+    // Prefill the assistant turn with `{"` so the model skips any preamble
+    // and starts generating JSON immediately. Works with most OpenAI-compatible servers.
+    if (llmConfig.prefillJson) {
+      messages.push({ role: 'assistant', content: '{"' });
+    }
+
     const response = await axios.post(
       url,
-      {
-        model: llmConfig.model || 'auto',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
-            ],
-          },
-        ],
-        max_tokens: llmConfig.maxTokens || 400,
-        temperature: llmConfig.temperature ?? 0.2,
-      },
+      body,
       {
         timeout: llmConfig.timeoutMs || 60000,
         headers: { 'Content-Type': 'application/json' },
@@ -89,7 +104,13 @@ function createAnalyzer({ llmConfig, subjects, logger = console }) {
     );
 
     const elapsed = Date.now() - startedAt;
-    const content = response.data?.choices?.[0]?.message?.content || '';
+    let content = response.data?.choices?.[0]?.message?.content || '';
+    if (llmConfig.prefillJson && content && !content.trimStart().startsWith('{')) {
+      content = '{"' + content;
+    }
+    if (!content) {
+      logger.warn(`[llm] empty response (finish_reason=${response.data?.choices?.[0]?.finish_reason}, model=${llmConfig.model})`);
+    }
     const parsed = parseJsonLoose(content);
     const result = normalize(parsed, subjects, { elapsed, raw: content });
 
@@ -97,10 +118,20 @@ function createAnalyzer({ llmConfig, subjects, logger = console }) {
     return { ...result, cached: false };
   }
 
-  return { classify };
+  function setSubjects(newSubjects) {
+    subjects = newSubjects;
+    cache.clear();
+  }
+
+  function setSubjectDetails(details) {
+    llmConfig.subjectDetails = details;
+    cache.clear();
+  }
+
+  return { classify, setSubjects, setSubjectDetails };
 }
 
-function buildPrompt(subjects, windowMeta, context) {
+function buildPrompt(subjects, windowMeta, context, subjectDetails = {}) {
   const subjectList = subjects.map((s) => `"${s}"`).join(', ');
   const meta = [
     windowMeta.processName ? `process: ${windowMeta.processName}` : '',
@@ -110,7 +141,14 @@ function buildPrompt(subjects, windowMeta, context) {
     .filter(Boolean)
     .join(' | ');
 
-  return `You are a study-coach classifier looking at a screenshot from a high-school student's computer.
+  const detailLines = subjects
+    .filter((s) => subjectDetails[s]?.detail)
+    .map((s) => `  - ${s}: ${subjectDetails[s].detail}`);
+  const subjectContext = detailLines.length
+    ? `\nSubject-specific context for this student (use to improve accuracy):\n${detailLines.join('\n')}\n`
+    : '';
+
+  return `You are a study-coach classifier looking at a screenshot from a high-school student's computer.${subjectContext}
 Context source: ${context} (either "foreground" for the active window, or "background_sweep" for the full screen).
 Foreground window metadata: ${meta || 'none'}
 
